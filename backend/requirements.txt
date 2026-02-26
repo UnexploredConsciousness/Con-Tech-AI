@@ -1,45 +1,39 @@
-# ─────────────────────────────────────────────────────────────
-# Guardian AI — Production Dependencies
-# Optimized for Cloud Deployment (Render)
-# ─────────────────────────────────────────────────────────────
-
-# ── Web Framework ─────────────────────────────────────────────
+# Web Framework 
 Flask==3.0.3
 flask-cors==4.0.1
 Werkzeug==3.0.3
 gunicorn==22.0.0
 
-# ── Audio Processing ──────────────────────────────────────────
+# Audio Processing 
 librosa==0.10.2
 soundfile==0.12.1
 pydub==0.25.1
-# pyaudio removed for server environments (not needed, avoid PortAudio system dependency)
 
-# ── Faster-Whisper (offline Speech-to-Text) ───────────────────
+# Faster-Whisper (offline Speech-to-Text) 
 faster-whisper==1.0.3
 ctranslate2>=4.0.0         
 
-# ── HuggingFace Transformers (BERT + Deepfake models) ─────────
+# HuggingFace Transformers (BERT + Deepfake models) 
 transformers==4.44.2
 tokenizers>=0.19.0
 
-# ── PyTorch (CPU) ─────────────────────────────────────────────
+# PyTorch (CPU) 
 torch
 torchvision
 
-# ── Image & Video Processing ──────────────────────────────────
+# Image Processing 
 Pillow==10.4.0
 opencv-python-headless==4.10.0.84
 imagehash==4.3.1
 
-# ── Machine Learning ──────────────────────────────────────────
+# Machine Learning 
 numpy==1.26.4
 scipy==1.13.1
 scikit-learn==1.5.1
 joblib==1.4.2
 tensorflow
 
-# ── Utilities ─────────────────────────────────────────────────
+# Utilities 
 regex==2024.4.16
 python-dotenv==1.0.1
 requests==2.32.3
