@@ -4,19 +4,24 @@ services:
     name: guardian-ai-backend
     env: python
     rootDir: backend
-    plan: starter # ML models require more memory; free tier may OOM
-    buildCommand: pip install -r requirements.txt && python download_models.py
+    # ML models + FFmpeg extraction require more memory.
+    # We highly recommend at least the "Starter" plan (512MB) or "Pro" (>1GB) for TensorFlow/PyTorch
+    plan: starter 
+    buildCommand: bash render-build.sh
+    # We increase the Gunicorn timeout significantly to handle heavy model loading 
+    # and longer deepfake analysis times without dropping the connection.
     startCommand: gunicorn app:app --timeout 120 --workers 2
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.10.0
       - key: KMP_DUPLICATE_LIB_OK
         value: "TRUE"
+      # We add the local bin folder to PATH so the app can find the FFmpeg binary we downloaded
+      - key: PATH
+        value: "/opt/render/project/bin:$PATH"
 
   # ─── FRONTEND (Static Web App) ─────────────────────────────
   - type: web
     name: guardian-ai-frontend
     env: static
     rootDir: frontend
-    buildCommand: "" # No build step required for raw HTML/JS/CSS
+    buildCommand: "" 
     staticPublishPath: .

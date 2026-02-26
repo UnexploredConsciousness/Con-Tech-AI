@@ -1,11 +1,6 @@
 # ─────────────────────────────────────────────────────────────
-# Guardian AI v2.0 — Python Dependencies
-# Install: pip install -r requirements.txt
-#
-# Pretrained models used:
-#   Audio → faster-whisper (offline STT, no API key)
-#   Image → prithivMLmods/Deep-Fake-Detector-Model (HuggingFace, ~80MB)
-#   Text  → mrm8488/bert-tiny-finetuned-sms-spam-detection (HuggingFace, ~17MB)
+# Guardian AI — Production Dependencies
+# Optimized for Cloud Deployment (Render)
 # ─────────────────────────────────────────────────────────────
 
 # ── Web Framework ─────────────────────────────────────────────
@@ -18,48 +13,35 @@ gunicorn==22.0.0
 librosa==0.10.2
 soundfile==0.12.1
 pydub==0.25.1
-pyaudio==0.2.14
+# pyaudio removed for server environments (not needed, avoid PortAudio system dependency)
 
 # ── Faster-Whisper (offline Speech-to-Text) ───────────────────
-# Replaces SpeechRecognition + Google API
-# Downloads Whisper model weights (~150MB for "base") on first run
-# Stored in ~/.cache/whisper/
 faster-whisper==1.0.3
-ctranslate2>=4.0.0         # Required by faster-whisper
+ctranslate2>=4.0.0         
 
 # ── HuggingFace Transformers (BERT + Deepfake models) ─────────
-# Used by: image_analyzer (deepfake detection) + text_analyzer (BERT spam)
-# Models download to ~/.cache/huggingface/ on first run
 transformers==4.44.2
 tokenizers>=0.19.0
 
 # ── PyTorch (CPU) ─────────────────────────────────────────────
-# Required by transformers for inference
-# If you have a GPU: pip install torch --index-url https://download.pytorch.org/whl/cu121
 torch
 torchvision
 
-# ── Image Processing ──────────────────────────────────────────
+# ── Image & Video Processing ──────────────────────────────────
 Pillow==10.4.0
 opencv-python-headless==4.10.0.84
 imagehash==4.3.1
 
-# ── Machine Learning (fallback / training) ────────────────────
+# ── Machine Learning ──────────────────────────────────────────
 numpy==1.26.4
 scipy==1.13.1
 scikit-learn==1.5.1
 joblib==1.4.2
-
-# ── TensorFlow (EfficientNet — optional, forensic fallback) ───
-# Only needed if you run train_image.py or want TF-based feature extraction
-# Comment out if you don't need it (saves ~600MB)
 tensorflow
 
-# ── NLP helpers ───────────────────────────────────────────────
-regex==2024.4.16
-
 # ── Utilities ─────────────────────────────────────────────────
+regex==2024.4.16
 python-dotenv==1.0.1
 requests==2.32.3
 tqdm==4.66.4
-huggingface-hub>=0.24.0    # Model download management
+huggingface-hub>=0.24.0
