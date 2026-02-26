@@ -1,3 +1,27 @@
+🛡️ README
+👥 Team Name
+
+Con-Tech-AI
+
+🚀 Project Name
+
+Guardian AI — Multi-Modal Threat Detection System
+
+📌 P.S
+
+Guardian AI is built with a vision to combat the growing wave of AI-powered fraud, deepfakes, and digital scams. Our mission is to create a privacy-first, intelligent, and accessible defense system that protects everyday users in real time.
+
+🏁 Track
+
+Track 4 — AI & Machine Learning
+
+👨‍💻 Team Members & Roles
+Name	Role
+Shivam Singh	Backend Developer
+Trijal Anand	Frontend Developer
+Srajal Tiwari	DevOps Engineer
+Sujeet Jaiswal	Research & ML Engineer
+
 # 🛡️ Guardian AI — Multi-Modal Threat Detection System
 
 <div align="center">
