@@ -69,25 +69,25 @@ Guardian AI provides intelligent, automated detection for:
 ## 🖥️ Live Demo — Web Application
 
 ### Landing Page
-![Guardian AI Landing Page](1772108458752_image.png)
+![Guardian AI Landing Page](screenshots/landing.png)
 
 ### Feature Overview
-![Feature Cards](1772108507405_image.png)
+![Feature Cards](screenshots/features.png)
 
 ### Threat Analyzer — Audio Tab
-![Threat Analyzer](1772108541185_image.png)
+![Threat Analyzer](screenshots/analyzer.png)
 
 ### How It Works — 4-Stage Pipeline
-![How It Works](1772108565164_image.png)
+![How It Works](screenshots/how-it-works.png)
 
 ### Text Scam Analysis Result (HIGH Threat)
-![Text Scam Result](1772108621185_image.png)
+![Text Scam Result](screenshots/text-result.png)
 
 ### Image Deepfake Upload
-![Image Upload](1772108675913_image.png)
+![Image Upload](screenshots/image-upload.png)
 
 ### Image Analysis Result (SUSPICIOUS)
-![Image Analysis Result](1772108701734_image.png)
+![Image Analysis Result](screenshots/image-result.png)
 
 ---
 
