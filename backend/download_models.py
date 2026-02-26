@@ -2,6 +2,8 @@
 Guardian AI — Pre-download all pretrained models.
 Run this ONCE before starting the server.
 """
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 print("=" * 60)
 print("Guardian AI — Downloading Pretrained Models")

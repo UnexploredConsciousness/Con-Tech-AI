@@ -3,7 +3,7 @@
  * Handles tab switching, file uploads, API calls, and result rendering.
  */
 
-const API_BASE = "http://localhost:5000/api";
+const API_BASE = "http://127.0.0.1:5000/api"; // ✅ FIXED
 
 // ─── State ────────────────────────────────────────────────────────────────────
 const state = {
@@ -37,11 +37,11 @@ function initNav() {
     const hamburger = document.getElementById("hamburger");
 
     window.addEventListener("scroll", () => {
-        navbar.classList.toggle("scrolled", window.scrollY > 20);
+        navbar?.classList.toggle("scrolled", window.scrollY > 20);
     });
 
     hamburger?.addEventListener("click", () => {
-        navbar.classList.toggle("nav-open");
+        navbar?.classList.toggle("nav-open");
     });
 }
 
@@ -66,14 +66,15 @@ function switchTab(tabName) {
     hideResults();
 }
 
-// ─── Feature Card Click → Tab Switch ─────────────────────────────────────────
+// ─── Feature Cards ────────────────────────────────────────────────────────────
 function initFeatureCards() {
     document.querySelectorAll(".feature-card").forEach((card) => {
         card.addEventListener("click", () => {
             const tab = card.dataset.tab;
             if (tab) {
                 switchTab(tab);
-                document.getElementById("analyzer").scrollIntoView({ behavior: "smooth" });
+                document.getElementById("analyzer")
+                    ?.scrollIntoView({ behavior: "smooth" });
             }
         });
     });
@@ -88,14 +89,14 @@ function initFileUploads() {
 
         if (!dropZone || !fileInput) return;
 
-        // Click on drop zone → trigger file input
         dropZone.addEventListener("click", (e) => {
             if (e.target.tagName !== "BUTTON") fileInput.click();
         });
 
-        fileInput.addEventListener("change", () => handleFileSelect(type, fileInput.files[0]));
+        fileInput.addEventListener("change", () =>
+            handleFileSelect(type, fileInput.files[0])
+        );
 
-        // Drag and drop
         ["dragover", "dragenter"].forEach((evt) => {
             dropZone.addEventListener(evt, (e) => {
                 e.preventDefault();
@@ -104,7 +105,9 @@ function initFileUploads() {
         });
 
         ["dragleave", "dragend"].forEach((evt) => {
-            dropZone.addEventListener(evt, () => dropZone.classList.remove("drag-over"));
+            dropZone.addEventListener(evt, () =>
+                dropZone.classList.remove("drag-over")
+            );
         });
 
         dropZone.addEventListener("drop", (e) => {
@@ -128,7 +131,6 @@ function handleFileSelect(type, file) {
         infoEl.classList.remove("hidden");
     }
 
-    // Image preview
     if (type === "image") {
         const preview = document.getElementById("img-preview");
         const wrap = document.getElementById("img-preview-wrap");
@@ -176,13 +178,13 @@ function initExampleButtons() {
         btn.addEventListener("click", () => {
             const key = btn.dataset.example;
             const textarea = document.getElementById("text-input");
-            const charCount = document.getElementById("char-count");
-            const analyzeBtn = document.getElementById("btn-text");
 
             if (textarea && EXAMPLES[key]) {
                 textarea.value = EXAMPLES[key];
-                charCount.textContent = `${EXAMPLES[key].length.toLocaleString()} / 10,000 characters`;
-                analyzeBtn.disabled = false;
+
+                // Trigger input event so counter + button state updates
+                textarea.dispatchEvent(new Event("input", { bubbles: true }));
+
                 textarea.focus();
             }
         });
@@ -197,6 +199,7 @@ async function runAnalysis(type) {
         showError("Please select a file first.");
         return;
     }
+
     if (type === "text") {
         const text = document.getElementById("text-input")?.value?.trim();
         if (!text) {
@@ -217,7 +220,9 @@ async function runAnalysis(type) {
         }
         renderResults(type, result);
     } catch (err) {
-        showError(err.message || "Analysis failed. Make sure the backend is running.");
+        showError(
+            err.message || "Analysis failed. Make sure the backend is running."
+        );
     } finally {
         setLoading(type, false);
     }
@@ -242,6 +247,7 @@ async function analyzeFile(type) {
 
 async function analyzeText() {
     const text = document.getElementById("text-input").value.trim();
+
     const res = await fetchWithTimeout(`${API_BASE}/analyze/text`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -253,6 +259,20 @@ async function analyzeText() {
         throw new Error(err.error || `Server error: ${res.status}`);
     }
     return res.json();
+}
+
+// ─── Health Check ─────────────────────────────────────────────────────────────
+async function checkApiHealth() {
+    try {
+        const res = await fetchWithTimeout(`${API_BASE}/health`, {}, 3000);
+        if (res.ok) {
+            console.log("✅ Guardian AI API connected.");
+        }
+    } catch {
+        console.warn(
+            "⚠️ Cannot reach Guardian AI API. Is the backend running?"
+        );
+    }
 }
 
 // ─── Results Rendering ────────────────────────────────────────────────────────
