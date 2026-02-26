@@ -21,11 +21,20 @@ from utils import (
 from audio_analyzer import analyze_audio
 from image_analyzer import analyze_image
 from video_analyzer import analyze_video
-
-# ─── App Configuration ────────────────────────────────────────────
+from flasgger import Swagger
 
 app = Flask(__name__, static_folder=None)
+
+# Enable CORS
 CORS(app, resources={r"/api/*": {"origins": "*"}})
+
+# Swagger config
+app.config['SWAGGER'] = {
+    'title': 'Guardian AI API',
+    'uiversion': 3
+}
+
+swagger = Swagger(app)
 
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max upload
 
@@ -51,7 +60,31 @@ def serve_static(filename):
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    """Health check endpoint."""
+    """
+    Health Check Endpoint
+    ---
+    tags:
+      - System
+    responses:
+      200:
+        description: Backend health status
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+            data:
+              type: object
+              properties:
+                status:
+                  type: string
+                service:
+                  type: string
+                version:
+                  type: string
+                capabilities:
+                  type: object
+    """
     return jsonify(format_response(True, {
         'status': 'ok',
         'service': 'Guardian AI Backend',
