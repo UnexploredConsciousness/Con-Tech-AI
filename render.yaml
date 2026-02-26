@@ -1,0 +1,22 @@
+services:
+  # ─── BACKEND API (Flask + ML Models) ───────────────────────
+  - type: web
+    name: guardian-ai-backend
+    env: python
+    rootDir: backend
+    plan: starter # ML models require more memory; free tier may OOM
+    buildCommand: pip install -r requirements.txt && python download_models.py
+    startCommand: gunicorn app:app --timeout 120 --workers 2
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10.0
+      - key: KMP_DUPLICATE_LIB_OK
+        value: "TRUE"
+
+  # ─── FRONTEND (Static Web App) ─────────────────────────────
+  - type: web
+    name: guardian-ai-frontend
+    env: static
+    rootDir: frontend
+    buildCommand: "" # No build step required for raw HTML/JS/CSS
+    staticPublishPath: .
