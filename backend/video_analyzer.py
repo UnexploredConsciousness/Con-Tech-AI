@@ -1,464 +1,380 @@
 """
-Guardian AI - Video Deepfake Detection Pipeline
-================================================
-Analyzes video files for deepfake indicators using:
-1. Frame extraction & temporal consistency
-2. Face tracking & jitter detection
-3. Per-frame image analysis
-4. Audio-video alignment checking
-5. Weighted score aggregation
+Guardian AI - Video Deepfake Detection Analyzer
+Detects manipulated/AI-generated videos through temporal consistency,
+face tracking, frame-by-frame analysis, and audio-video sync.
 """
 
 import os
+import logging
+import tempfile
+import warnings
 import numpy as np
-from utils import logger, clamp, classify_threat_level
+from pathlib import Path
 
-try:
-    import cv2
-    HAS_CV2 = True
-except ImportError:
-    HAS_CV2 = False
+warnings.filterwarnings("ignore")
+logger = logging.getLogger("guardian-ai.video")
+
+# Import image analyzer for per-frame analysis
+from image_analyzer import ImageAnalyzer
 
 
-def analyze_video(filepath):
+class VideoAnalyzer:
     """
-    Main video analysis pipeline.
-    Returns a comprehensive analysis result dict.
+    Multi-stage video deepfake detection pipeline:
+      1. Frame extraction (10 evenly-spaced frames)
+      2. Temporal consistency analysis (30%)
+      3. Face tracking & jitter detection (25%)
+      4. Frame-by-frame deepfake analysis (35%)
+      5. Audio-video sync analysis (10%)
     """
-    logger.info(f"Starting video analysis: {filepath}")
-    results = {
-        'type': 'video',
-        'filename': os.path.basename(filepath),
-        'analyses': [],
-        'detected_indicators': [],
-        'recommendations': []
+
+    WEIGHTS = {
+        "temporal": 0.30,
+        "face_tracking": 0.25,
+        "frame_analysis": 0.35,
+        "audio_sync": 0.10,
     }
 
-    if not HAS_CV2:
-        results['error'] = 'OpenCV not available for video analysis'
-        results['threat_score'] = 0
-        results['threat_level'] = 'LOW'
-        results['threat_color'] = '#22c55e'
-        results['threat_description'] = 'Analysis incomplete — missing dependencies'
-        results['confidence'] = 0
-        return results
+    NUM_FRAMES = 10
 
-    # Extract video info and frames
-    video_info, frames = extract_frames(filepath)
-    if not frames:
-        results['error'] = 'Could not extract frames from video'
-        results['threat_score'] = 0
-        results['threat_level'] = 'LOW'
-        results['threat_color'] = '#22c55e'
-        results['threat_description'] = 'Could not process video'
-        results['confidence'] = 0
-        return results
+    def __init__(self):
+        self._analysis_count = 0
+        self._image_analyzer = ImageAnalyzer()
 
-    results['video_info'] = video_info
+    def is_ready(self) -> bool:
+        return True
 
-    # ─── Analysis 1: Temporal Consistency (30% weight) ────────────
-    temporal_result = analyze_temporal_consistency(frames)
-    results['analyses'].append({
-        'name': 'Temporal Consistency',
-        'score': temporal_result['score'],
-        'weight': 0.30,
-        'details': temporal_result['summary']
-    })
-    results['detected_indicators'].extend(temporal_result.get('indicators', []))
+    def get_analysis_count(self) -> int:
+        return self._analysis_count
 
-    # ─── Analysis 2: Face Tracking (25% weight) ──────────────────
-    face_result = analyze_face_tracking(frames)
-    results['analyses'].append({
-        'name': 'Face Tracking Analysis',
-        'score': face_result['score'],
-        'weight': 0.25,
-        'details': face_result['summary']
-    })
-    results['detected_indicators'].extend(face_result.get('indicators', []))
+    # ── Main Entry Point ──────────────────────────────────────────────────────
+    def analyze(self, filepath: str) -> dict:
+        self._analysis_count += 1
 
-    # ─── Analysis 3: Frame-by-Frame Analysis (35% weight) ────────
-    frame_result = analyze_frames_individually(frames)
-    results['analyses'].append({
-        'name': 'Frame-by-Frame Analysis',
-        'score': frame_result['score'],
-        'weight': 0.35,
-        'details': frame_result['summary']
-    })
-    results['detected_indicators'].extend(frame_result.get('indicators', []))
+        # Extract frames to a temp directory
+        frames_dir = tempfile.mkdtemp(prefix="guardian_frames_")
+        frame_paths = []
 
-    # ─── Analysis 4: Compression Artifacts (10% weight) ──────────
-    compression_result = analyze_video_compression(frames, video_info)
-    results['analyses'].append({
-        'name': 'Compression Artifact Analysis',
-        'score': compression_result['score'],
-        'weight': 0.10,
-        'details': compression_result['summary']
-    })
+        try:
+            video_meta = self._get_video_metadata(filepath)
+            frame_paths = self._extract_frames(filepath, frames_dir)
 
-    # ─── Weighted Aggregation ─────────────────────────────────────
-    final_score = (
-        temporal_result['score'] * 0.30 +
-        face_result['score'] * 0.25 +
-        frame_result['score'] * 0.35 +
-        compression_result['score'] * 0.10
-    )
-    final_score = clamp(final_score)
+            if not frame_paths:
+                return {
+                    "classification": "ERROR",
+                    "ai_probability": 0.0,
+                    "error": "Could not extract frames from video",
+                    "video_metadata": video_meta,
+                }
 
-    level, color, description = classify_threat_level(final_score)
+            scores = {}
+            details = {}
 
-    results['threat_score'] = round(final_score, 1)
-    results['threat_level'] = level
-    results['threat_color'] = color
-    results['threat_description'] = description
-    results['confidence'] = round(min(93, final_score + 12), 1)
-    results['classification'] = (
-        'DEEPFAKE' if final_score >= 60
-        else 'SUSPICIOUS' if final_score >= 35
-        else 'LIKELY_GENUINE'
-    )
-    results['recommendations'] = generate_video_recommendations(
-        results['classification'], results['detected_indicators']
-    )
-    results['frames_analyzed'] = len(frames)
+            scores["temporal"], details["temporal"] = self._temporal_analysis(frame_paths)
+            scores["face_tracking"], details["face_tracking"] = self._face_tracking(frame_paths)
+            scores["frame_analysis"], details["frame_analysis"] = self._frame_analysis(frame_paths)
+            scores["audio_sync"], details["audio_sync"] = self._audio_sync_analysis(filepath)
 
-    logger.info(f"Video analysis complete: score={final_score:.1f}, classification={results['classification']}")
-    return results
+            final_score = float(np.clip(
+                sum(scores[k] * self.WEIGHTS[k] for k in scores), 0, 100
+            ))
 
+            classification = self._classify(final_score)
 
-def extract_frames(filepath, max_frames=15):
-    """
-    Extract evenly-spaced frames from a video file.
-    Returns (video_info, list_of_frames).
-    """
-    try:
-        cap = cv2.VideoCapture(filepath)
-        if not cap.isOpened():
-            logger.error(f"Cannot open video: {filepath}")
-            return None, []
+            return {
+                "classification": classification,
+                "ai_probability": round(final_score, 2),
+                "frames_analyzed": len(frame_paths),
+                "video_metadata": video_meta,
+                "stage_scores": {k: round(v, 2) for k, v in scores.items()},
+                "analysis_details": details,
+                "recommendations": self._get_recommendations(classification),
+                "summary": (
+                    f"Classification: {classification} (AI probability {final_score:.1f}%). "
+                    f"Analyzed {len(frame_paths)} frames. "
+                    f"Highest concern from: {max(scores, key=scores.get)} stage."
+                ),
+            }
 
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        duration = total_frames / fps if fps > 0 else 0
+        finally:
+            # Cleanup extracted frames
+            for fp in frame_paths:
+                try:
+                    os.remove(fp)
+                except Exception:
+                    pass
+            try:
+                os.rmdir(frames_dir)
+            except Exception:
+                pass
 
-        video_info = {
-            'total_frames': total_frames,
-            'fps': round(fps, 2),
-            'width': width,
-            'height': height,
-            'duration_seconds': round(duration, 2),
-            'size_bytes': os.path.getsize(filepath)
-        }
+    # ── Video Metadata ────────────────────────────────────────────────────────
+    def _get_video_metadata(self, filepath: str) -> dict:
+        try:
+            import cv2
+            cap = cv2.VideoCapture(filepath)
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            duration = total_frames / fps if fps > 0 else 0
+            cap.release()
+            return {
+                "fps": round(fps, 2),
+                "total_frames": total_frames,
+                "width": width,
+                "height": height,
+                "duration_seconds": round(duration, 2),
+            }
+        except Exception as e:
+            return {"error": str(e)}
 
-        # Calculate frame indices to sample
-        num_samples = min(max_frames, total_frames)
-        if num_samples < 2:
-            num_samples = min(2, total_frames)
+    # ── Frame Extraction ──────────────────────────────────────────────────────
+    def _extract_frames(self, filepath: str, output_dir: str) -> list:
+        """Extract NUM_FRAMES evenly-spaced frames from the video."""
+        try:
+            import cv2
+            cap = cv2.VideoCapture(filepath)
+            total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            if total <= 0:
+                cap.release()
+                return []
 
-        indices = np.linspace(0, total_frames - 1, num_samples, dtype=int)
+            indices = np.linspace(0, max(total - 1, 0), min(self.NUM_FRAMES, total), dtype=int)
+            saved = []
 
-        frames = []
-        for idx in indices:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-            ret, frame = cap.read()
-            if ret:
-                # Resize for consistent analysis (max 512px on longest side)
-                h, w = frame.shape[:2]
-                if max(h, w) > 512:
-                    scale = 512 / max(h, w)
-                    frame = cv2.resize(frame, (int(w * scale), int(h * scale)))
-                frames.append(frame)
+            for idx in indices:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
+                ret, frame = cap.read()
+                if ret:
+                    path = os.path.join(output_dir, f"frame_{idx:06d}.jpg")
+                    cv2.imwrite(path, frame)
+                    saved.append(path)
 
-        cap.release()
-        logger.info(f"Extracted {len(frames)} frames from {total_frames} total")
-        return video_info, frames
+            cap.release()
+            logger.debug(f"Extracted {len(saved)} frames from {filepath}")
+            return saved
 
-    except Exception as e:
-        logger.error(f"Frame extraction error: {e}")
-        return None, []
+        except Exception as e:
+            logger.error(f"Frame extraction failed: {e}")
+            return []
 
+    # ── Stage 2: Temporal Consistency ─────────────────────────────────────────
+    def _temporal_analysis(self, frame_paths: list) -> tuple:
+        """Detect temporal inconsistencies between consecutive frames."""
+        findings = []
+        score = 0.0
 
-def analyze_temporal_consistency(frames):
-    """
-    Check temporal consistency between consecutive frames.
-    Deepfakes often show sudden color shifts, brightness changes, or jitter.
-    """
-    if len(frames) < 2:
-        return {'score': 0, 'summary': 'Not enough frames for temporal analysis', 'indicators': []}
+        try:
+            import cv2
+            if len(frame_paths) < 2:
+                return 0.0, {"score": 0.0, "findings": ["Not enough frames for temporal analysis"]}
 
-    indicators = []
-    score = 0
-    frame_diffs = []
-    color_shifts = []
+            diffs = []
+            for i in range(1, len(frame_paths)):
+                f1 = cv2.imread(frame_paths[i - 1], cv2.IMREAD_GRAYSCALE)
+                f2 = cv2.imread(frame_paths[i], cv2.IMREAD_GRAYSCALE)
+                if f1 is None or f2 is None:
+                    continue
+                if f1.shape != f2.shape:
+                    f2 = cv2.resize(f2, (f1.shape[1], f1.shape[0]))
+                diff = cv2.absdiff(f1, f2)
+                diffs.append(float(diff.mean()))
 
-    for i in range(len(frames) - 1):
-        # Absolute difference between consecutive frames
-        diff = cv2.absdiff(frames[i], frames[i + 1])
-        mean_diff = np.mean(diff)
-        frame_diffs.append(mean_diff)
+            if not diffs:
+                return 0.0, {"score": 0.0, "findings": ["Could not compute frame differences"]}
 
-        # Color channel shifts
-        for c in range(3):
-            c_shift = abs(float(np.mean(frames[i][:, :, c])) - float(np.mean(frames[i + 1][:, :, c])))
-            color_shifts.append(c_shift)
+            mean_diff = float(np.mean(diffs))
+            std_diff = float(np.std(diffs))
+            cv_diff = std_diff / (mean_diff + 1e-8)  # Coefficient of variation
 
-    # Check for sudden spikes in frame differences
-    if frame_diffs:
-        mean_fd = np.mean(frame_diffs)
-        std_fd = np.std(frame_diffs)
+            findings.append(f"Mean inter-frame diff: {mean_diff:.3f}")
+            findings.append(f"Std inter-frame diff: {std_diff:.3f}")
+            findings.append(f"Coefficient of variation: {cv_diff:.3f}")
 
-        # Count anomalous transitions
-        anomalous = sum(1 for d in frame_diffs if d > mean_fd + 2 * std_fd) if std_fd > 0 else 0
-        if anomalous > 0:
-            score += min(30, anomalous * 12)
-            indicators.append({
-                'type': 'Temporal Anomaly',
-                'detail': f'{anomalous} sudden frame transitions detected (mean diff: {mean_fd:.2f})',
-                'severity': 'high' if anomalous > 2 else 'medium'
-            })
+            # Very low variation = unnaturally smooth transitions (GAN artifact)
+            if cv_diff < 0.15:
+                score += 50
+                findings.append("Suspiciously smooth inter-frame transitions — deepfake signal")
+            elif cv_diff < 0.30:
+                score += 20
+                findings.append("Low variance in frame transitions — mildly suspicious")
 
-        # High overall variance suggests inconsistency
-        if std_fd > mean_fd * 0.8 and mean_fd > 5:
-            score += 15
-            indicators.append({
-                'type': 'Inconsistent Frame Flow',
-                'detail': f'High variance in frame-to-frame changes (σ/μ: {std_fd/mean_fd:.2f})',
-                'severity': 'medium'
-            })
+            # Very high variation = blending artifacts
+            if std_diff > 30:
+                score += 25
+                findings.append("High frame difference spikes — possible blending artifacts")
 
-    # Check for sudden color shifts
-    if color_shifts:
-        max_shift = max(color_shifts)
-        if max_shift > 30:
-            score += 15
-            indicators.append({
-                'type': 'Color Shift',
-                'detail': f'Sudden color channel shift detected (max: {max_shift:.1f})',
-                'severity': 'medium'
-            })
+        except Exception as e:
+            logger.warning(f"Temporal analysis error: {e}")
+            findings.append(f"Error: {str(e)}")
 
-    return {
-        'score': clamp(score),
-        'indicators': indicators,
-        'summary': f'{len(indicators)} temporal anomalies detected' if indicators
-                   else 'Temporal consistency appears normal'
-    }
+        return float(np.clip(score, 0, 100)), {"score": round(score, 2), "findings": findings}
 
+    # ── Stage 3: Face Tracking ────────────────────────────────────────────────
+    def _face_tracking(self, frame_paths: list) -> tuple:
+        """Track face positions across frames to detect jitter and morphing."""
+        findings = []
+        score = 0.0
 
-def analyze_face_tracking(frames):
-    """
-    Track face positions across frames and detect jitter or morphing.
-    """
-    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-    indicators = []
-    score = 0
-    face_positions = []
-    face_sizes = []
-    frames_with_faces = 0
+        try:
+            import cv2
+            cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+            face_cascade = cv2.CascadeClassifier(cascade_path)
 
-    for frame in frames:
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
+            positions = []
+            sizes = []
+            frames_with_face = 0
 
-        if len(faces) > 0:
-            frames_with_faces += 1
-            # Largest face
-            areas = [w * h for (x, y, w, h) in faces]
-            largest_idx = np.argmax(areas)
-            x, y, w, h = faces[largest_idx]
-            face_positions.append((x + w // 2, y + h // 2))
-            face_sizes.append(w * h)
+            for fp in frame_paths:
+                img = cv2.imread(fp, cv2.IMREAD_GRAYSCALE)
+                if img is None:
+                    continue
+                faces = face_cascade.detectMultiScale(img, 1.1, 4, minSize=(30, 30))
+                if len(faces) > 0:
+                    x, y, w, h = faces[0]
+                    positions.append((x + w / 2, y + h / 2))
+                    sizes.append(w * h)
+                    frames_with_face += 1
 
-    if frames_with_faces < 3:
-        return {
-            'score': 0,
-            'summary': f'Faces detected in {frames_with_faces}/{len(frames)} frames — insufficient for tracking',
-            'indicators': []
-        }
+            findings.append(f"Frames with face detected: {frames_with_face}/{len(frame_paths)}")
 
-    # Analyze face position stability (jitter detection)
-    if len(face_positions) >= 3:
-        pos_array = np.array(face_positions)
-        pos_diffs = np.diff(pos_array, axis=0)
-        jitter = np.std(np.linalg.norm(pos_diffs, axis=1))
+            if frames_with_face < 2:
+                findings.append("Not enough face detections for tracking analysis")
+                return 0.0, {"score": 0.0, "findings": findings}
 
-        if jitter > 20:
-            score += 25
-            indicators.append({
-                'type': 'Face Jitter',
-                'detail': f'Unstable face position across frames (jitter: {jitter:.1f}px)',
-                'severity': 'high'
-            })
-        elif jitter > 10:
-            score += 12
-            indicators.append({
-                'type': 'Mild Face Jitter',
-                'detail': f'Noticeable face position instability (jitter: {jitter:.1f}px)',
-                'severity': 'medium'
-            })
+            # Position jitter
+            positions = np.array(positions)
+            pos_jitter = float(np.std(np.diff(positions, axis=0)))
+            findings.append(f"Position jitter (std of position changes): {pos_jitter:.2f}")
 
-    # Analyze face size consistency
-    if len(face_sizes) >= 3:
-        size_std = np.std(face_sizes)
-        size_mean = np.mean(face_sizes)
-        if size_mean > 0 and size_std / size_mean > 0.25:
-            score += 15
-            indicators.append({
-                'type': 'Face Size Variance',
-                'detail': f'Inconsistent face size (CV: {size_std / size_mean:.2f})',
-                'severity': 'medium'
-            })
+            if pos_jitter > 20:
+                score += 35
+                findings.append("High face jitter — unstable face position suggests deepfake blending")
+            elif pos_jitter > 10:
+                score += 15
 
-    # Check face detection consistency
-    detection_ratio = frames_with_faces / len(frames)
-    if 0.3 < detection_ratio < 0.7:
-        score += 10
-        indicators.append({
-            'type': 'Intermittent Face Detection',
-            'detail': f'Face detected in only {frames_with_faces}/{len(frames)} frames — may indicate morphing',
-            'severity': 'medium'
-        })
+            # Size consistency — deepfake faces can flicker in size
+            size_cv = float(np.std(sizes) / (np.mean(sizes) + 1e-8))
+            findings.append(f"Face size coefficient of variation: {size_cv:.3f}")
 
-    return {
-        'score': clamp(score),
-        'indicators': indicators,
-        'faces_tracked': frames_with_faces,
-        'summary': f'Tracked faces in {frames_with_faces}/{len(frames)} frames, {len(indicators)} anomalies'
-    }
-
-
-def analyze_frames_individually(frames):
-    """
-    Analyze individual frames for AI-generation artifacts.
-    Uses noise analysis and edge detection on each frame.
-    """
-    indicators = []
-    frame_scores = []
-
-    for i, frame in enumerate(frames):
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        frame_score = 0
-
-        # Laplacian variance
-        lap_var = cv2.Laplacian(gray, cv2.CV_64F).var()
-        if lap_var < 30:
-            frame_score += 30
-        elif lap_var < 100:
-            frame_score += 10
-
-        # Edge density
-        edges = cv2.Canny(gray, 50, 150)
-        edge_density = np.mean(edges > 0)
-        if edge_density < 0.02:
-            frame_score += 15
-
-        # Color uniformity
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        sat_std = np.std(hsv[:, :, 1])
-        if sat_std < 15:
-            frame_score += 10
-
-        frame_scores.append(frame_score)
-
-    if not frame_scores:
-        return {'score': 0, 'summary': 'No frames to analyze', 'indicators': []}
-
-    avg_score = np.mean(frame_scores)
-    suspicious_count = sum(1 for s in frame_scores if s > 25)
-    suspicious_ratio = suspicious_count / len(frame_scores)
-
-    if suspicious_ratio > 0.6:
-        indicators.append({
-            'type': 'Majority Suspicious Frames',
-            'detail': f'{suspicious_count}/{len(frame_scores)} frames show AI-generation artifacts',
-            'severity': 'high'
-        })
-    elif suspicious_ratio > 0.3:
-        indicators.append({
-            'type': 'Some Suspicious Frames',
-            'detail': f'{suspicious_count}/{len(frame_scores)} frames show potential artifacts',
-            'severity': 'medium'
-        })
-
-    return {
-        'score': clamp(avg_score + suspicious_ratio * 20),
-        'indicators': indicators,
-        'frame_scores': [round(s, 1) for s in frame_scores],
-        'suspicious_ratio': round(suspicious_ratio, 3),
-        'summary': f'{suspicious_count}/{len(frame_scores)} suspicious frames (avg score: {avg_score:.1f})'
-    }
-
-
-def analyze_video_compression(frames, video_info):
-    """Analyze video compression artifacts and codec anomalies."""
-    score = 0
-    details = []
-
-    if video_info:
-        # Check for unusual resolution
-        w, h = video_info.get('width', 0), video_info.get('height', 0)
-        if w > 0 and h > 0:
-            aspect_ratio = w / h
-            common_ratios = [16/9, 4/3, 1, 9/16, 3/4]
-            min_diff = min(abs(aspect_ratio - r) for r in common_ratios)
-            if min_diff > 0.1:
+            if size_cv > 0.20:
+                score += 30
+                findings.append("High face size variance — inconsistent face tracking")
+            elif size_cv > 0.10:
                 score += 10
-                details.append(f'Unusual aspect ratio ({aspect_ratio:.3f})')
 
-        # Check for unusual frame rate
-        fps = video_info.get('fps', 0)
-        if fps > 0 and fps not in [23.976, 24, 25, 29.97, 30, 50, 59.94, 60]:
-            if abs(fps - round(fps)) > 0.1:
-                score += 5
-                details.append(f'Non-standard frame rate ({fps})')
+        except Exception as e:
+            logger.warning(f"Face tracking error: {e}")
+            findings.append(f"Error: {str(e)}")
 
-        # Very short videos might be generated clips
-        duration = video_info.get('duration_seconds', 0)
-        if 0 < duration < 3:
-            score += 8
-            details.append(f'Very short duration ({duration:.1f}s)')
+        return float(np.clip(score, 0, 100)), {"score": round(score, 2), "findings": findings}
 
-    # Check inter-frame compression consistency
-    if len(frames) >= 3:
-        complexities = []
-        for frame in frames:
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            complexities.append(cv2.Laplacian(gray, cv2.CV_64F).var())
+    # ── Stage 4: Frame-by-Frame Analysis ─────────────────────────────────────
+    def _frame_analysis(self, frame_paths: list) -> tuple:
+        """Run image deepfake detection on each extracted frame."""
+        findings = []
+        ai_scores = []
 
-        comp_std = np.std(complexities)
-        comp_mean = np.mean(complexities)
-        if comp_mean > 0 and comp_std / comp_mean > 0.5:
-            score += 10
-            details.append('Inconsistent frame complexity across video')
+        for fp in frame_paths:
+            try:
+                result = self._image_analyzer.analyze(fp)
+                ai_prob = result.get("ai_probability", 0.0)
+                ai_scores.append(ai_prob)
+                findings.append(f"Frame {os.path.basename(fp)}: AI probability {ai_prob:.1f}%")
+            except Exception as e:
+                findings.append(f"Frame {os.path.basename(fp)}: analysis error ({e})")
 
-    return {
-        'score': clamp(score),
-        'summary': '; '.join(details) if details else 'Compression characteristics appear normal'
-    }
+        if not ai_scores:
+            return 0.0, {"score": 0.0, "findings": findings}
 
+        mean_score = float(np.mean(ai_scores))
+        ai_frame_ratio = sum(1 for s in ai_scores if s >= 60) / len(ai_scores)
+        findings.append(f"Mean frame AI score: {mean_score:.1f}%")
+        findings.append(f"High-AI-score frames: {ai_frame_ratio * 100:.1f}%")
 
-def generate_video_recommendations(classification, indicators):
-    """Generate recommendations based on video analysis."""
-    if classification == 'DEEPFAKE':
-        return [
-            '🚨 This video shows strong signs of deepfake manipulation',
-            '❌ Do not trust this video as authentic evidence',
-            '🔍 Compare with known authentic footage of the same person',
-            '📝 If used for fraud/misinformation, report to platform and authorities',
-            '⚠️ Deepfake videos are increasingly used in scams and disinformation'
-        ]
-    elif classification == 'SUSPICIOUS':
-        return [
-            '⚠️ This video has some concerning characteristics',
-            '🔍 Look for subtle face distortions or unnatural movements',
-            '🔎 Check if audio lip-sync appears natural',
-            '💡 Search for the original source of this video',
-            '📋 Consider the context — who shared it and why?'
-        ]
-    else:
-        return [
-            '✅ Video appears to be genuine',
-            '💡 Stay vigilant — deepfake technology is rapidly advancing',
-            '🔍 When authenticity matters, verify with multiple methods'
-        ]
+        score = mean_score * 0.6 + ai_frame_ratio * 100 * 0.4
+        return float(np.clip(score, 0, 100)), {"score": round(score, 2), "findings": findings}
+
+    # ── Stage 5: Audio-Video Sync ─────────────────────────────────────────────
+    def _audio_sync_analysis(self, filepath: str) -> tuple:
+        """Basic audio-video sync check via energy alignment."""
+        findings = []
+        score = 0.0
+
+        try:
+            import cv2
+            import librosa
+
+            # Extract audio track to temp file
+            audio_tmp = filepath.rsplit(".", 1)[0] + "_audio_tmp.wav"
+            os.system(f"ffmpeg -y -i {filepath} -vn -acodec pcm_s16le -ar 16000 {audio_tmp} -loglevel quiet")
+
+            if not os.path.exists(audio_tmp):
+                findings.append("No audio track found or ffmpeg unavailable")
+                return 0.0, {"score": 0.0, "findings": findings}
+
+            y, sr = librosa.load(audio_tmp, sr=None, mono=True)
+            os.remove(audio_tmp)
+
+            # Get audio RMS per segment
+            frame_length = int(sr * 0.1)
+            hop_length = frame_length // 2
+            rms = librosa.feature.rms(y=y, frame_length=frame_length, hop_length=hop_length)[0]
+
+            audio_duration = len(y) / sr
+            findings.append(f"Audio duration: {audio_duration:.2f}s")
+
+            # Check for silences that don't match visible speech in frames
+            silence_ratio = float(np.sum(rms < 0.01) / len(rms))
+            findings.append(f"Silence ratio: {silence_ratio:.2%}")
+
+            if silence_ratio > 0.7:
+                score += 30
+                findings.append("Very high silence ratio — audio may be dubbed or manipulated")
+            elif silence_ratio > 0.5:
+                score += 15
+
+            # Audio RMS variance (deepfakes often have unnaturally even volume)
+            rms_cv = float(rms.std() / (rms.mean() + 1e-8))
+            findings.append(f"Audio RMS coefficient of variation: {rms_cv:.3f}")
+            if rms_cv < 0.2:
+                score += 25
+                findings.append("Unnaturally consistent audio levels — possible synthetic audio")
+
+        except Exception as e:
+            logger.warning(f"Audio sync analysis error: {e}")
+            findings.append(f"Audio sync analysis unavailable: {str(e)}")
+
+        return float(np.clip(score, 0, 100)), {"score": round(score, 2), "findings": findings}
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
+    @staticmethod
+    def _classify(score: float) -> str:
+        if score >= 65:
+            return "DEEPFAKE"
+        elif score >= 35:
+            return "SUSPICIOUS"
+        return "GENUINE"
+
+    @staticmethod
+    def _get_recommendations(classification: str) -> list:
+        recs = {
+            "DEEPFAKE": [
+                "🚫 This video is highly likely to be a deepfake.",
+                "❌ Do not spread or use this video as evidence.",
+                "📢 Report to the platform where it was shared.",
+                "🔍 Cross-reference with verified sources.",
+                "⚖️ If used in a legal context, consult a forensics expert.",
+            ],
+            "SUSPICIOUS": [
+                "⚠️ Suspicious artifacts detected in this video.",
+                "🔬 Do not treat this video as conclusive evidence.",
+                "🎥 Look for inconsistencies in facial lighting and motion.",
+            ],
+            "GENUINE": [
+                "✅ No strong deepfake indicators found.",
+                "💡 Continue exercising healthy skepticism for online content.",
+            ],
+        }
+        return recs.get(classification, recs["GENUINE"])

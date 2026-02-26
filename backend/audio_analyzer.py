@@ -1,507 +1,409 @@
 """
-Guardian AI - Audio Scam Detection Pipeline
-============================================
-Analyzes audio files for phone scam indicators using:
-1. Speech-to-text transcription
-2. Audio feature extraction (librosa)
-3. Keyword & behavioral pattern detection
-4. ML model prediction
-5. Weighted score aggregation
+Guardian AI - Audio Scam Detection Analyzer (v2.0)
+Upgraded: Faster-Whisper (offline STT) replaces Google Speech Recognition.
+Pipeline: Faster-Whisper → Keyword Detection → Behavioral Analysis → BERT Fraud
 """
 
 import os
 import re
+import logging
+import warnings
 import numpy as np
-from utils import logger, clamp, classify_threat_level
+from pathlib import Path
 
-# ─── Scam Keyword Database ───────────────────────────────────────
+warnings.filterwarnings("ignore")
+logger = logging.getLogger("guardian-ai.audio")
 
+# ─── Scam Keyword Database ────────────────────────────────────────────────────
 SCAM_KEYWORDS = {
-    'urgent': {
-        'words': [
-            'urgent', 'immediately', 'right now', 'hurry', 'quickly',
-            'time is running out', 'last chance', 'deadline', 'expire',
-            'act now', 'don\'t delay', 'limited time', 'final notice',
-            'emergency', 'critical', 'asap', 'rush', 'without delay'
+    "urgent": {
+        "words": [
+            "urgent", "immediately", "right now", "expire today", "limited time",
+            "act now", "last chance", "final notice", "deadline", "overdue",
+            "suspended", "terminated", "arrested", "warrant", "legal action",
         ],
-        'weight': 3.0,
-        'category': 'Urgency Pressure'
+        "weight": 1.5,
     },
-    'financial': {
-        'words': [
-            'bank account', 'credit card', 'social security', 'ssn',
-            'wire transfer', 'bitcoin', 'cryptocurrency', 'payment',
-            'refund', 'prize', 'lottery', 'won', 'million dollars',
-            'inheritance', 'tax', 'irs', 'revenue', 'outstanding balance',
-            'overdue payment', 'penalty', 'fine', 'fee', 'charge',
-            'gift card', 'money order', 'western union', 'account number',
-            'routing number', 'pin number', 'cvv', 'expiry', 'cash',
-            'deposit', 'withdrawal', 'transaction', 'frozen account'
+    "financial": {
+        "words": [
+            "bank account", "credit card", "wire transfer", "gift card", "bitcoin",
+            "cryptocurrency", "send money", "payment required", "fees", "refund",
+            "lottery", "prize", "inheritance", "millions", "investment opportunity",
+            "guaranteed return", "irs", "tax", "social security", "ssn",
         ],
-        'weight': 4.0,
-        'category': 'Financial Solicitation'
+        "weight": 2.0,
     },
-    'threats': {
-        'words': [
-            'arrest', 'warrant', 'police', 'jail', 'prison',
-            'legal action', 'lawsuit', 'court', 'prosecute',
-            'suspend', 'terminate', 'cancel', 'block', 'freeze',
-            'seized', 'confiscate', 'criminal', 'investigation',
-            'violation', 'illegal', 'fraud', 'offense', 'penalty'
+    "authority": {
+        "words": [
+            "police", "fbi", "cia", "government", "microsoft", "apple", "amazon",
+            "official", "badge number", "officer", "agent", "department",
+            "social security administration", "medicare", "immigration",
         ],
-        'weight': 4.5,
-        'category': 'Threat & Intimidation'
+        "weight": 1.8,
     },
-    'authority': {
-        'words': [
-            'government', 'federal', 'agent', 'officer', 'department',
-            'internal revenue', 'social security administration',
-            'microsoft support', 'apple support', 'tech support',
-            'customer service', 'supervisor', 'manager', 'director',
-            'official', 'certified', 'authorized', 'verification',
-            'compliance', 'regulatory', 'fbi', 'cia', 'homeland'
+    "threats": {
+        "words": [
+            "arrest", "jail", "prison", "lawsuit", "sue", "legal consequences",
+            "deport", "criminal charges", "penalty", "fine", "frozen account",
+            "hack", "compromised", "virus", "malware",
         ],
-        'weight': 3.5,
-        'category': 'Authority Impersonation'
+        "weight": 2.2,
     },
-    'personal_info': {
-        'words': [
-            'verify your identity', 'confirm your', 'provide your',
-            'date of birth', 'mother\'s maiden', 'password', 'login',
-            'username', 'email address', 'home address', 'full name',
-            'identification', 'passport', 'driver\'s license', 'id number',
-            'personal information', 'sensitive data', 'verification code',
-            'one-time password', 'otp', 'security question'
+    "personal_info": {
+        "words": [
+            "social security number", "date of birth", "mother maiden name",
+            "password", "pin", "cvv", "account number", "routing number",
+            "verify your identity", "confirm your details",
         ],
-        'weight': 4.0,
-        'category': 'Personal Information Request'
+        "weight": 2.5,
     },
-    'pressure': {
-        'words': [
-            'don\'t tell anyone', 'keep this confidential', 'secret',
-            'don\'t hang up', 'stay on the line', 'do not share',
-            'between us', 'private matter', 'confidential',
-            'no one else', 'trust me', 'believe me', 'honest',
-            'guarantee', 'promise', 'assured', 'certain'
-        ],
-        'weight': 3.5,
-        'category': 'Secrecy & Pressure'
-    }
 }
 
-# ─── Behavioral Patterns ─────────────────────────────────────────
-
 BEHAVIORAL_PATTERNS = [
-    {
-        'name': 'Urgency + Financial',
-        'description': 'Combines urgency with financial requests — classic scam pattern',
-        'categories': ['urgent', 'financial'],
-        'score_boost': 15
-    },
-    {
-        'name': 'Authority + Threat',
-        'description': 'Impersonates authority while making threats',
-        'categories': ['authority', 'threats'],
-        'score_boost': 20
-    },
-    {
-        'name': 'Threat + Personal Info',
-        'description': 'Uses threats to extract personal information',
-        'categories': ['threats', 'personal_info'],
-        'score_boost': 18
-    },
-    {
-        'name': 'Authority + Financial',
-        'description': 'Impersonates authority to request financial action',
-        'categories': ['authority', 'financial'],
-        'score_boost': 16
-    },
-    {
-        'name': 'Pressure + Personal Info',
-        'description': 'Uses pressure tactics to extract personal data',
-        'categories': ['pressure', 'personal_info'],
-        'score_boost': 14
-    },
-    {
-        'name': 'Full Scam Pattern',
-        'description': 'Multiple scam categories detected — very high likelihood of scam',
-        'categories': ['urgent', 'financial', 'threats'],
-        'score_boost': 25
-    }
+    (r"\b(do not|don't|never)\s+(tell|inform|contact)\b", 3.0, "Secrecy demand"),
+    (r"\b(stay on the line|don't hang up|keep this confidential)\b", 2.5, "Isolation tactic"),
+    (r"\b(i am calling from|this is an official call from)\b", 1.5, "Authority impersonation"),
+    (r"\b(your computer has|we detected|we found a virus)\b", 2.0, "Tech support scam"),
+    (r"\b(you have won|congratulations|selected as winner)\b", 2.0, "Lottery scam"),
+    (r"\b(send gift cards|itunes card|google play card|steam card)\b", 3.0, "Gift card scam"),
+    (r"\b(press 1|press 2|press [0-9])\b", 1.0, "Robocall indicator"),
+    (r"\b(verify now|confirm immediately|validate your)\b", 1.8, "Verification pressure"),
 ]
 
 
-def analyze_audio(filepath):
+class AudioAnalyzer:
     """
-    Main audio analysis pipeline.
-    Returns a comprehensive analysis result dict.
+    Audio scam detection pipeline (v2.0 with Faster-Whisper):
+      1. Preprocess audio to WAV (pydub)
+      2. Transcribe with Faster-Whisper (offline, no API key needed)
+      3. Extract audio features with librosa
+      4. Keyword detection (35%)
+      5. Behavioral pattern analysis (40%)
+      6. BERT/ML fraud prediction (25%)
     """
-    logger.info(f"Starting audio analysis: {filepath}")
-    results = {
-        'type': 'audio',
-        'filename': os.path.basename(filepath),
-        'analyses': [],
-        'detected_patterns': [],
-        'recommendations': []
-    }
 
-    # Step 1: Transcribe audio
-    transcript = transcribe_audio(filepath)
-    results['transcript'] = transcript
+    WHISPER_MODEL_SIZE = "base"   # tiny | base | small | medium
+    WHISPER_COMPUTE   = "int8"    # int8 (CPU) | float16 (GPU)
 
-    if not transcript or transcript == '[Transcription unavailable]':
-        # Even without transcript, analyze audio features
-        audio_features = extract_audio_features(filepath)
-        results['audio_features'] = audio_features
+    def __init__(self):
+        self._analysis_count = 0
+        self._whisper        = None
+        self._bert_tokenizer = None
+        self._bert_model     = None
+        self._lr_model       = None
+        self._lr_vectorizer  = None
+        self._init_whisper()
+        self._init_bert()
+        self._load_fallback_model()
 
-        feature_score = analyze_audio_features_score(audio_features)
-        results['analyses'].append({
-            'name': 'Audio Feature Analysis',
-            'score': feature_score,
-            'weight': 1.0,
-            'details': 'Analyzed audio characteristics (pitch, energy, tempo)'
-        })
+    # ── Model Initialisation ──────────────────────────────────────────────────
 
-        final_score = clamp(feature_score)
-        level, color, description = classify_threat_level(final_score)
-        results['threat_score'] = round(final_score, 1)
-        results['threat_level'] = level
-        results['threat_color'] = color
-        results['threat_description'] = description
-        results['confidence'] = round(min(60, final_score + 20), 1)
-        results['recommendations'] = generate_recommendations(level, [])
-        return results
-
-    # Step 2: Extract audio features
-    audio_features = extract_audio_features(filepath)
-    results['audio_features'] = audio_features
-
-    # Step 3: Keyword analysis (35% weight)
-    keyword_result = analyze_keywords(transcript)
-    results['analyses'].append({
-        'name': 'Keyword Detection',
-        'score': keyword_result['score'],
-        'weight': 0.35,
-        'details': keyword_result['summary'],
-        'found_keywords': keyword_result['found_keywords'],
-        'categories_detected': keyword_result['categories']
-    })
-
-    # Step 4: Behavioral analysis (40% weight)
-    behavioral_result = analyze_behavior(transcript, keyword_result['categories'])
-    results['analyses'].append({
-        'name': 'Behavioral Analysis',
-        'score': behavioral_result['score'],
-        'weight': 0.40,
-        'details': behavioral_result['summary'],
-        'patterns_detected': behavioral_result['patterns']
-    })
-    results['detected_patterns'] = behavioral_result['patterns']
-
-    # Step 5: Audio feature scoring (25% weight)
-    feature_score = analyze_audio_features_score(audio_features)
-    results['analyses'].append({
-        'name': 'Audio Feature Analysis',
-        'score': feature_score,
-        'weight': 0.25,
-        'details': f"Voice characteristics analysis (pitch variance, energy, tempo)"
-    })
-
-    # Step 6: Weighted aggregation
-    final_score = (
-        keyword_result['score'] * 0.35 +
-        behavioral_result['score'] * 0.40 +
-        feature_score * 0.25
-    )
-    final_score = clamp(final_score)
-
-    level, color, description = classify_threat_level(final_score)
-
-    results['threat_score'] = round(final_score, 1)
-    results['threat_level'] = level
-    results['threat_color'] = color
-    results['threat_description'] = description
-    results['confidence'] = round(min(95, final_score + 15), 1)
-    results['recommendations'] = generate_recommendations(level, keyword_result['categories'])
-
-    logger.info(f"Audio analysis complete: score={final_score:.1f}, level={level}")
-    return results
-
-
-def transcribe_audio(filepath):
-    """Transcribe audio file to text using SpeechRecognition."""
-    try:
-        import speech_recognition as sr
-        from pydub import AudioSegment
-
-        # Convert to WAV if needed
-        ext = os.path.splitext(filepath)[1].lower()
-        wav_path = filepath
-        if ext != '.wav':
-            try:
-                audio = AudioSegment.from_file(filepath)
-                wav_path = filepath.rsplit('.', 1)[0] + '_converted.wav'
-                audio.export(wav_path, format='wav')
-                logger.info(f"Converted {ext} to WAV: {wav_path}")
-            except Exception as e:
-                logger.warning(f"Audio conversion failed: {e}")
-                return '[Transcription unavailable]'
-
-        recognizer = sr.Recognizer()
-        with sr.AudioFile(wav_path) as source:
-            recognizer.adjust_for_ambient_noise(source, duration=0.5)
-            audio_data = recognizer.record(source)
-
+    def _init_whisper(self):
+        """Load Faster-Whisper model once at startup."""
         try:
-            transcript = recognizer.recognize_google(audio_data)
-            logger.info(f"Transcription successful: {len(transcript)} chars")
-            return transcript
-        except sr.UnknownValueError:
-            logger.warning("Speech not recognized")
-            return '[Speech not recognized]'
-        except sr.RequestError as e:
-            logger.warning(f"Google API error: {e}")
-            return '[Transcription unavailable]'
+            from faster_whisper import WhisperModel
+            logger.info(
+                f"Loading Faster-Whisper '{self.WHISPER_MODEL_SIZE}' "
+                f"(compute={self.WHISPER_COMPUTE})…"
+            )
+            self._whisper = WhisperModel(
+                self.WHISPER_MODEL_SIZE,
+                device="cpu",
+                compute_type=self.WHISPER_COMPUTE,
+            )
+            logger.info("✅ Faster-Whisper loaded — fully offline STT ready.")
+        except ImportError:
+            logger.warning(
+                "faster-whisper not installed. "
+                "Run: pip install faster-whisper  "
+                "Falling back to SpeechRecognition."
+            )
+        except Exception as e:
+            logger.warning(f"Faster-Whisper init failed: {e}")
 
-    except ImportError as e:
-        logger.warning(f"Missing dependency for transcription: {e}")
-        return '[Transcription unavailable]'
-    except Exception as e:
-        logger.error(f"Transcription error: {e}")
-        return '[Transcription unavailable]'
+    def _init_bert(self):
+        """Load a small pretrained BERT spam/fraud classifier from HuggingFace."""
+        # mrm8488/bert-tiny-finetuned-sms-spam-detection
+        # ~17 MB model — downloads once, cached in ~/.cache/huggingface/
+        model_name = "mrm8488/bert-tiny-finetuned-sms-spam-detection"
+        try:
+            from transformers import AutoTokenizer, AutoModelForSequenceClassification
+            import torch
+            logger.info(f"Loading BERT fraud model '{model_name}'…")
+            self._bert_tokenizer = AutoTokenizer.from_pretrained(model_name)
+            self._bert_model     = AutoModelForSequenceClassification.from_pretrained(model_name)
+            self._bert_model.eval()
+            logger.info("✅ BERT fraud classifier loaded.")
+        except ImportError:
+            logger.warning("transformers / torch not installed — BERT stage unavailable.")
+        except Exception as e:
+            logger.warning(f"BERT audio init failed: {e}")
 
+    def _load_fallback_model(self):
+        """Load a locally-trained logistic regression model if present."""
+        model_path = Path(__file__).parent / "models" / "audio_scam_model.pkl"
+        vec_path   = Path(__file__).parent / "models" / "audio_vectorizer.pkl"
+        try:
+            import joblib
+            if model_path.exists() and vec_path.exists():
+                self._lr_model      = joblib.load(model_path)
+                self._lr_vectorizer = joblib.load(vec_path)
+                logger.info("Local LR model loaded (used when BERT unavailable).")
+        except Exception as e:
+            logger.warning(f"Local model load failed: {e}")
 
-def extract_audio_features(filepath):
-    """Extract audio features using librosa."""
-    features = {
-        'duration': 0,
-        'zero_crossing_rate': 0,
-        'spectral_centroid': 0,
-        'spectral_rolloff': 0,
-        'mfcc_mean': [],
-        'tempo': 0,
-        'rms_energy': 0,
-        'pitch_mean': 0,
-        'pitch_std': 0
-    }
+    def is_ready(self) -> bool:
+        return True
 
-    try:
-        import librosa
+    def get_analysis_count(self) -> int:
+        return self._analysis_count
 
-        y, sr = librosa.load(filepath, sr=22050, duration=120)
-        features['duration'] = round(len(y) / sr, 2)
+    # ── Main Entry Point ──────────────────────────────────────────────────────
 
-        # Zero crossing rate
-        zcr = librosa.feature.zero_crossing_rate(y)
-        features['zero_crossing_rate'] = round(float(np.mean(zcr)), 6)
+    def analyze(self, filepath: str) -> dict:
+        self._analysis_count += 1
 
-        # Spectral centroid
-        sc = librosa.feature.spectral_centroid(y=y, sr=sr)
-        features['spectral_centroid'] = round(float(np.mean(sc)), 2)
+        wav_path = self._preprocess(filepath)
 
-        # Spectral rolloff
-        sro = librosa.feature.spectral_rolloff(y=y, sr=sr)
-        features['spectral_rolloff'] = round(float(np.mean(sro)), 2)
+        transcription, confidence, language = self._transcribe(wav_path)
 
-        # MFCCs
-        mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
-        features['mfcc_mean'] = [round(float(m), 4) for m in np.mean(mfccs, axis=1)]
+        if wav_path != filepath and os.path.exists(wav_path):
+            try:
+                os.remove(wav_path)
+            except Exception:
+                pass
 
-        # Tempo
-        tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
-        features['tempo'] = round(float(tempo) if np.isscalar(tempo) else float(tempo[0]), 2)
+        audio_features = self._extract_audio_features(filepath)
 
-        # RMS Energy
-        rms = librosa.feature.rms(y=y)
-        features['rms_energy'] = round(float(np.mean(rms)), 6)
+        keyword_score,    keyword_flags    = self._keyword_detection(transcription)
+        behavioral_score, behavioral_flags = self._behavioral_analysis(transcription)
+        ml_score,         ml_source        = self._ml_prediction(transcription)
 
-        # Pitch (using piptrack)
-        pitches, magnitudes = librosa.piptrack(y=y, sr=sr)
-        pitch_values = pitches[magnitudes > np.median(magnitudes)]
-        pitch_values = pitch_values[pitch_values > 0]
-        if len(pitch_values) > 0:
-            features['pitch_mean'] = round(float(np.mean(pitch_values)), 2)
-            features['pitch_std'] = round(float(np.std(pitch_values)), 2)
+        raw_score   = keyword_score * 0.35 + behavioral_score * 0.40 + ml_score * 0.25
+        final_score = float(np.clip(raw_score, 0, 100))
+        threat_level = self._classify_threat(final_score)
 
-    except ImportError:
-        logger.warning("librosa not available, skipping audio feature extraction")
-    except Exception as e:
-        logger.error(f"Feature extraction error: {e}")
+        return {
+            "threat_level":              threat_level,
+            "threat_score":              round(final_score, 2),
+            "transcription":             transcription,
+            "transcription_confidence":  round(confidence, 2),
+            "detected_language":         language,
+            "stt_engine":                "faster-whisper" if self._whisper else "google-fallback",
+            "audio_features":            audio_features,
+            "scores": {
+                "keyword":    round(keyword_score, 2),
+                "behavioral": round(behavioral_score, 2),
+                "ml_model":   round(ml_score, 2),
+            },
+            "ml_source":           ml_source,
+            "detected_keywords":   keyword_flags,
+            "behavioral_patterns": behavioral_flags,
+            "recommendations":     self._get_recommendations(threat_level, keyword_flags, behavioral_flags),
+            "summary":             self._build_summary(threat_level, final_score, keyword_flags, behavioral_flags),
+        }
 
-    return features
+    # ── Stage 1: Preprocessing ────────────────────────────────────────────────
 
+    def _preprocess(self, filepath: str) -> str:
+        if filepath.lower().endswith(".wav"):
+            return filepath
+        try:
+            from pydub import AudioSegment
+            audio    = AudioSegment.from_file(filepath)
+            audio    = audio.set_frame_rate(16000).set_channels(1)
+            wav_path = filepath.rsplit(".", 1)[0] + "_converted.wav"
+            audio.export(wav_path, format="wav")
+            return wav_path
+        except Exception as e:
+            logger.warning(f"Audio conversion failed ({e}) — using original.")
+            return filepath
 
-def analyze_keywords(transcript):
-    """Analyze transcript for scam keywords."""
-    text = transcript.lower()
-    found_keywords = []
-    categories = []
-    total_score = 0
-    category_scores = {}
+    # ── Stage 2: Transcription (Faster-Whisper) ───────────────────────────────
 
-    for category_key, category_data in SCAM_KEYWORDS.items():
-        cat_found = []
-        for keyword in category_data['words']:
-            count = text.count(keyword.lower())
-            if count > 0:
-                cat_found.append({
-                    'keyword': keyword,
-                    'count': count,
-                    'category': category_data['category']
-                })
-                total_score += count * category_data['weight']
+    def _transcribe(self, wav_path: str) -> tuple:
+        """
+        Primary: Faster-Whisper (offline, no API key, multilingual).
+        Fallback: SpeechRecognition (Google API, requires internet).
+        Returns (text, confidence, language).
+        """
+        # ── Faster-Whisper ──────────────────────────────────────────────────
+        if self._whisper is not None:
+            try:
+                segments, info = self._whisper.transcribe(
+                    wav_path,
+                    beam_size=5,
+                    language=None,       # auto-detect language
+                    vad_filter=True,     # skip silent parts
+                    vad_parameters=dict(min_silence_duration_ms=500),
+                )
+                transcript = " ".join(seg.text.strip() for seg in segments).lower()
+                avg_conf   = float(info.duration_after_vad / max(info.duration, 0.001))
+                language   = getattr(info, "language", "unknown")
+                logger.debug(f"Whisper: lang={language}, conf≈{avg_conf:.2f}, text='{transcript[:80]}'")
+                return transcript, min(0.99, avg_conf), language
+            except Exception as e:
+                logger.warning(f"Faster-Whisper transcription failed: {e}")
 
-        if cat_found:
-            categories.append(category_data['category'])
-            category_scores[category_data['category']] = len(cat_found)
-            found_keywords.extend(cat_found)
+        # ── SpeechRecognition fallback ──────────────────────────────────────
+        try:
+            import speech_recognition as sr
+            recognizer = sr.Recognizer()
+            with sr.AudioFile(wav_path) as source:
+                recognizer.adjust_for_ambient_noise(source, duration=0.5)
+                audio_data = recognizer.record(source)
+            text = recognizer.recognize_google(audio_data)
+            return text.lower(), 0.80, "en"
+        except ImportError:
+            logger.warning("SpeechRecognition not installed either.")
+        except Exception as e:
+            logger.warning(f"STT fallback also failed: {e}")
 
-    # Normalize score to 0-100
-    normalized = clamp(total_score * 3, 0, 100)
+        return "", 0.0, "unknown"
 
-    summary_parts = []
-    for cat, count in category_scores.items():
-        summary_parts.append(f"{cat}: {count} keywords")
-    summary = '; '.join(summary_parts) if summary_parts else 'No scam keywords detected'
+    # ── Stage 3: Audio Feature Extraction ────────────────────────────────────
 
-    return {
-        'score': normalized,
-        'found_keywords': found_keywords,
-        'categories': categories,
-        'summary': summary
-    }
+    def _extract_audio_features(self, filepath: str) -> dict:
+        try:
+            import librosa
+            y, sr = librosa.load(filepath, sr=None, mono=True, duration=60)
+            mfccs             = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
+            zcr               = librosa.feature.zero_crossing_rate(y)
+            spectral_centroid = librosa.feature.spectral_centroid(y=y, sr=sr)
+            rms               = librosa.feature.rms(y=y)
+            tempo, _          = librosa.beat.beat_track(y=y, sr=sr)
+            return {
+                "duration_seconds":       round(float(len(y) / sr), 2),
+                "sample_rate":            int(sr),
+                "tempo_bpm":              round(float(tempo), 2),
+                "mean_zcr":               round(float(np.mean(zcr)), 4),
+                "mean_rms_energy":        round(float(np.mean(rms)), 4),
+                "mean_spectral_centroid": round(float(np.mean(spectral_centroid)), 2),
+                "mfcc_mean":              [round(float(m), 4) for m in np.mean(mfccs, axis=1)],
+            }
+        except Exception as e:
+            logger.warning(f"Audio feature extraction failed: {e}")
+            return {"error": "Feature extraction unavailable"}
 
+    # ── Stage 4a: Keyword Detection ───────────────────────────────────────────
 
-def analyze_behavior(transcript, keyword_categories):
-    """Analyze behavioral patterns in the transcript."""
-    patterns_detected = []
-    behavior_score = 0
+    def _keyword_detection(self, text: str) -> tuple:
+        if not text:
+            return 0.0, []
+        flags       = []
+        total_score = 0.0
+        for category, info in SCAM_KEYWORDS.items():
+            for word in info["words"]:
+                if word in text:
+                    total_score += info["weight"] * 4.0
+                    flags.append({"keyword": word, "category": category, "severity": info["weight"]})
+        return float(np.clip(total_score * 2.5, 0, 100)), flags
 
-    # Check for pattern combinations
-    for pattern in BEHAVIORAL_PATTERNS:
-        required_cats = pattern['categories']
-        # Map category keys to category names
-        required_names = []
-        for key in required_cats:
-            if key in SCAM_KEYWORDS:
-                required_names.append(SCAM_KEYWORDS[key]['category'])
+    # ── Stage 4b: Behavioral Analysis ────────────────────────────────────────
 
-        if all(name in keyword_categories for name in required_names):
-            patterns_detected.append({
-                'name': pattern['name'],
-                'description': pattern['description'],
-                'severity': 'high' if pattern['score_boost'] >= 18 else 'medium'
-            })
-            behavior_score += pattern['score_boost']
+    def _behavioral_analysis(self, text: str) -> tuple:
+        if not text:
+            return 0.0, []
+        flags        = []
+        total_weight = 0.0
+        for pattern, weight, label in BEHAVIORAL_PATTERNS:
+            if re.search(pattern, text, re.IGNORECASE):
+                flags.append({"pattern": label, "severity": weight})
+                total_weight += weight
+        if len(flags) >= 3:
+            total_weight *= 1.3
+        return float(np.clip(total_weight * 10.0, 0, 100)), flags
 
-    # Additional text-based behavioral analysis
-    text = transcript.lower()
+    # ── Stage 4c: ML Prediction ───────────────────────────────────────────────
 
-    # Check for excessive urgency language
-    urgency_phrases = ['right now', 'immediately', 'don\'t hang up', 'stay on the line',
-                       'act now', 'last chance', 'time is running out']
-    urgency_count = sum(1 for phrase in urgency_phrases if phrase in text)
-    if urgency_count >= 2:
-        behavior_score += 10
-        patterns_detected.append({
-            'name': 'Repeated Urgency',
-            'description': f'Multiple urgency phrases detected ({urgency_count} instances)',
-            'severity': 'medium'
-        })
+    def _ml_prediction(self, text: str) -> tuple:
+        """
+        Priority order:
+          1. BERT tiny spam model (HuggingFace) — most accurate
+          2. Local logistic regression model
+          3. Keyword-count heuristic
+        """
+        if not text:
+            return 0.0, "no_text"
 
-    # Check for information extraction attempts
-    info_phrases = ['tell me your', 'what is your', 'give me your', 'provide your',
-                    'confirm your', 'verify your']
-    info_count = sum(1 for phrase in info_phrases if phrase in text)
-    if info_count >= 1:
-        behavior_score += 12
-        patterns_detected.append({
-            'name': 'Information Extraction',
-            'description': f'Attempts to extract personal information ({info_count} instances)',
-            'severity': 'high'
-        })
+        # BERT
+        if self._bert_tokenizer and self._bert_model:
+            try:
+                import torch
+                inputs = self._bert_tokenizer(
+                    text[:512],
+                    return_tensors="pt",
+                    truncation=True,
+                    max_length=512,
+                )
+                with torch.no_grad():
+                    outputs = self._bert_model(**inputs)
+                probs      = torch.softmax(outputs.logits, dim=1)
+                spam_prob  = float(probs[0][1].item())
+                return spam_prob * 100, "bert-tiny-sms-spam"
+            except Exception as e:
+                logger.warning(f"BERT prediction error: {e}")
 
-    normalized = clamp(behavior_score * 2, 0, 100)
+        # Local LR model
+        if self._lr_model and self._lr_vectorizer:
+            try:
+                features = self._lr_vectorizer.transform([text])
+                prob     = float(self._lr_model.predict_proba(features)[0][1])
+                return prob * 100, "local-logistic-regression"
+            except Exception as e:
+                logger.warning(f"LR prediction error: {e}")
 
-    return {
-        'score': normalized,
-        'patterns': patterns_detected,
-        'summary': f"{len(patterns_detected)} behavioral patterns detected" if patterns_detected
-                   else "No suspicious behavioral patterns detected"
-    }
+        # Heuristic fallback
+        all_words  = [w for cat in SCAM_KEYWORDS.values() for w in cat["words"]]
+        hit_count  = sum(1 for w in all_words if w in text)
+        return min(100.0, hit_count * 5.0), "keyword-heuristic"
 
+    # ── Helpers ───────────────────────────────────────────────────────────────
 
-def analyze_audio_features_score(features):
-    """
-    Score audio features for scam indicators.
-    Scam calls often have: high energy variance, aggressive pitch, fast tempo.
-    """
-    score = 0
+    @staticmethod
+    def _classify_threat(score: float) -> str:
+        if score >= 70: return "CRITICAL"
+        if score >= 50: return "HIGH"
+        if score >= 30: return "MEDIUM"
+        return "LOW"
 
-    # High tempo can indicate pressured speech
-    if features.get('tempo', 0) > 140:
-        score += 15
-    elif features.get('tempo', 0) > 120:
-        score += 8
+    @staticmethod
+    def _get_recommendations(threat_level, kw_flags, beh_flags):
+        base = {
+            "CRITICAL": [
+                "❌ Hang up immediately — this is almost certainly a scam.",
+                "🚫 Do NOT provide any personal or financial information.",
+                "📞 Report the number to your carrier and local authorities.",
+                "🔒 If you shared account details, contact your bank immediately.",
+            ],
+            "HIGH": [
+                "⚠️ Strong scam indicators detected. Do not share personal info.",
+                "🔍 Independently verify the caller's identity via official channels.",
+                "📵 Consider blocking this number.",
+            ],
+            "MEDIUM": [
+                "⚡ Suspicious patterns found. Proceed with caution.",
+                "✅ Verify the caller before providing any information.",
+            ],
+            "LOW": [
+                "✅ No major threats detected.",
+                "💡 Always verify unexpected callers independently.",
+            ],
+        }
+        tips       = list(base.get(threat_level, base["LOW"]))
+        beh_labels = [b["pattern"] for b in beh_flags]
+        if "Gift card scam" in beh_labels:
+            tips.append("🎁 Legitimate organisations NEVER ask for gift cards as payment.")
+        if "Tech support scam" in beh_labels:
+            tips.append("💻 Microsoft/Apple will NEVER cold-call you about viruses.")
+        return tips
 
-    # High pitch variance can indicate emotional manipulation
-    if features.get('pitch_std', 0) > 200:
-        score += 12
-    elif features.get('pitch_std', 0) > 100:
-        score += 6
-
-    # High RMS energy can indicate aggressive/loud speech
-    if features.get('rms_energy', 0) > 0.05:
-        score += 10
-    elif features.get('rms_energy', 0) > 0.02:
-        score += 5
-
-    # Very high zero crossing rate can indicate stressed speech
-    if features.get('zero_crossing_rate', 0) > 0.1:
-        score += 8
-
-    return clamp(score, 0, 100)
-
-
-def generate_recommendations(threat_level, categories):
-    """Generate actionable recommendations based on threat level."""
-    recommendations = []
-
-    if threat_level == 'CRITICAL':
-        recommendations = [
-            '🚨 Do NOT provide any personal or financial information',
-            '📵 End the call immediately',
-            '🔒 If you shared any information, contact your bank/provider immediately',
-            '📝 Report this number to local authorities and FTC (reportfraud.ftc.gov)',
-            '🛑 Block this caller number'
-        ]
-    elif threat_level == 'HIGH':
-        recommendations = [
-            '⚠️ Exercise extreme caution — do not share sensitive information',
-            '🔍 Verify the caller\'s identity independently (call the organization directly)',
-            '📵 Consider ending the call if they pressure you',
-            '📝 Note the caller\'s number and claims for potential reporting'
-        ]
-    elif threat_level == 'MEDIUM':
-        recommendations = [
-            '🔍 Verify the caller\'s identity before proceeding',
-            '❓ Ask specific questions that only the real organization would know',
-            '📞 Offer to call them back on an official number',
-            '💡 Be cautious about sharing personal information'
-        ]
-    else:
-        recommendations = [
-            '✅ No significant threats detected',
-            '💡 Always stay vigilant — verify unexpected requests independently',
-            '📞 When in doubt, hang up and call back on an official number'
-        ]
-
-    # Add category-specific recommendations
-    if 'Financial Solicitation' in categories:
-        recommendations.append('💰 Never send money or gift cards to unknown callers')
-    if 'Authority Impersonation' in categories:
-        recommendations.append('🏛️ Government agencies never call demanding immediate payment')
-    if 'Personal Information Request' in categories:
-        recommendations.append('🔐 Legitimate organizations never ask for passwords over the phone')
-
-    return recommendations
+    @staticmethod
+    def _build_summary(threat_level, score, kw_flags, beh_flags):
+        categories = list({f["category"] for f in kw_flags})
+        cat_str    = ", ".join(categories) if categories else "none"
+        return (
+            f"Threat Level: {threat_level} (score {score:.1f}/100). "
+            f"Detected {len(kw_flags)} scam keyword(s) across categories: {cat_str}. "
+            f"Found {len(beh_flags)} behavioural pattern(s)."
+        )

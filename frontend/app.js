@@ -1,443 +1,467 @@
 /**
- * Guardian AI — Frontend Application Logic
- * ==========================================
- * Handles tab switching, drag-and-drop file upload, API communication,
- * and dynamic results rendering with animated threat gauges.
+ * Guardian AI — Frontend Application
+ * Handles tab switching, file uploads, API calls, and result rendering.
  */
 
-// ─── Configuration ───────────────────────────────────────────
-const API_BASE = window.location.origin;
+const API_BASE = "http://localhost:5000/api";
 
-// Track selected files per tab
-const selectedFiles = { audio: null, image: null, video: null };
+// ─── State ────────────────────────────────────────────────────────────────────
+const state = {
+    activeTab: "audio",
+    files: { audio: null, image: null, video: null },
+    loading: false,
+};
 
-// ─── Tab Switching ───────────────────────────────────────────
+// ─── Example Messages ─────────────────────────────────────────────────────────
+const EXAMPLES = {
+    scam: `URGENT: Your bank account has been SUSPENDED due to suspicious activity! Verify your identity immediately or your account will be permanently closed. Click here NOW: http://bit.ly/secure-verify-2024\n\nDo NOT ignore this message. You have 24 HOURS to act.`,
+    phishing: `Dear Customer,\n\nWe detected unauthorized access to your PayPal account from an unrecognized device.\n\nTo secure your account, please verify your information immediately:\nhttp://paypa1-secure-login.tk/verify\n\nFailure to verify within 48 hours will result in permanent account suspension.\n\n— PayPal Security Team`,
+    legit: `Hi! Just a reminder that your dentist appointment is scheduled for tomorrow, March 5th at 2:30 PM with Dr. Smith. Please arrive 10 minutes early. Reply YES to confirm or NO to reschedule. Call us at (555) 123-4567 if you have any questions.`,
+};
+
+// ─── DOM Ready ────────────────────────────────────────────────────────────────
+document.addEventListener("DOMContentLoaded", () => {
+    initNav();
+    initTabs();
+    initFileUploads();
+    initTextInput();
+    initExampleButtons();
+    initFeatureCards();
+    initResults();
+    checkApiHealth();
+});
+
+// ─── Navigation ───────────────────────────────────────────────────────────────
+function initNav() {
+    const navbar = document.getElementById("navbar");
+    const hamburger = document.getElementById("hamburger");
+
+    window.addEventListener("scroll", () => {
+        navbar.classList.toggle("scrolled", window.scrollY > 20);
+    });
+
+    hamburger?.addEventListener("click", () => {
+        navbar.classList.toggle("nav-open");
+    });
+}
+
+// ─── Tabs ─────────────────────────────────────────────────────────────────────
+function initTabs() {
+    document.querySelectorAll(".tab-btn").forEach((btn) => {
+        btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+    });
+}
 
 function switchTab(tabName) {
-    // Update tab buttons
-    document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
-    document.getElementById(`tab-${tabName}`).classList.add('active');
+    state.activeTab = tabName;
 
-    // Update panels
-    document.querySelectorAll('.tab-panel').forEach(panel => {
-        panel.classList.add('hidden');
-        panel.classList.remove('active');
+    document.querySelectorAll(".tab-btn").forEach((b) => {
+        b.classList.toggle("active", b.dataset.tab === tabName);
     });
-    const panel = document.getElementById(`panel-${tabName}`);
-    panel.classList.remove('hidden');
-    panel.classList.add('active');
+
+    document.querySelectorAll(".tab-panel").forEach((p) => {
+        p.classList.toggle("active", p.id === `panel-${tabName}`);
+    });
+
+    hideResults();
 }
 
-// ─── Drag & Drop Handling ────────────────────────────────────
-
-function handleDragOver(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    e.currentTarget.classList.add('dragging');
+// ─── Feature Card Click → Tab Switch ─────────────────────────────────────────
+function initFeatureCards() {
+    document.querySelectorAll(".feature-card").forEach((card) => {
+        card.addEventListener("click", () => {
+            const tab = card.dataset.tab;
+            if (tab) {
+                switchTab(tab);
+                document.getElementById("analyzer").scrollIntoView({ behavior: "smooth" });
+            }
+        });
+    });
 }
 
-function handleDragLeave(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    e.currentTarget.classList.remove('dragging');
+// ─── File Uploads ─────────────────────────────────────────────────────────────
+function initFileUploads() {
+    ["audio", "image", "video"].forEach((type) => {
+        const dropZone = document.getElementById(`drop-${type}`);
+        const fileInput = document.getElementById(`input-${type}`);
+        const analyzeBtn = document.getElementById(`btn-${type}`);
+
+        if (!dropZone || !fileInput) return;
+
+        // Click on drop zone → trigger file input
+        dropZone.addEventListener("click", (e) => {
+            if (e.target.tagName !== "BUTTON") fileInput.click();
+        });
+
+        fileInput.addEventListener("change", () => handleFileSelect(type, fileInput.files[0]));
+
+        // Drag and drop
+        ["dragover", "dragenter"].forEach((evt) => {
+            dropZone.addEventListener(evt, (e) => {
+                e.preventDefault();
+                dropZone.classList.add("drag-over");
+            });
+        });
+
+        ["dragleave", "dragend"].forEach((evt) => {
+            dropZone.addEventListener(evt, () => dropZone.classList.remove("drag-over"));
+        });
+
+        dropZone.addEventListener("drop", (e) => {
+            e.preventDefault();
+            dropZone.classList.remove("drag-over");
+            const file = e.dataTransfer?.files?.[0];
+            if (file) handleFileSelect(type, file);
+        });
+
+        analyzeBtn?.addEventListener("click", () => runAnalysis(type));
+    });
 }
 
-function handleDrop(e, type) {
-    e.preventDefault();
-    e.stopPropagation();
-    e.currentTarget.classList.remove('dragging');
+function handleFileSelect(type, file) {
+    if (!file) return;
+    state.files[type] = file;
 
-    const files = e.dataTransfer.files;
-    if (files.length > 0) {
-        setFile(type, files[0]);
+    const infoEl = document.getElementById(`file-info-${type}`);
+    if (infoEl) {
+        infoEl.textContent = `📎 ${file.name} (${formatBytes(file.size)})`;
+        infoEl.classList.remove("hidden");
     }
-}
 
-function handleFileSelect(e, type) {
-    const files = e.target.files;
-    if (files.length > 0) {
-        setFile(type, files[0]);
+    // Image preview
+    if (type === "image") {
+        const preview = document.getElementById("img-preview");
+        const wrap = document.getElementById("img-preview-wrap");
+        if (preview && wrap) {
+            preview.src = URL.createObjectURL(file);
+            wrap.classList.remove("hidden");
+        }
     }
+
+    const btn = document.getElementById(`btn-${type}`);
+    if (btn) btn.disabled = false;
+
+    hideResults();
 }
 
-// ─── File Management ─────────────────────────────────────────
+// ─── Text Input ───────────────────────────────────────────────────────────────
+function initTextInput() {
+    const textarea = document.getElementById("text-input");
+    const charCount = document.getElementById("char-count");
+    const analyzeBtn = document.getElementById("btn-text");
+    const clearBtn = document.getElementById("btn-clear-text");
 
-function setFile(type, file) {
-    // Validate file size (50MB)
-    if (file.size > 50 * 1024 * 1024) {
-        showToast('File too large. Maximum size is 50MB.', 'error');
+    textarea?.addEventListener("input", () => {
+        const len = textarea.value.length;
+        charCount.textContent = `${len.toLocaleString()} / 10,000 characters`;
+        charCount.style.color = len > 9000 ? "#ff4444" : "";
+        analyzeBtn.disabled = len === 0;
+        hideResults();
+    });
+
+    clearBtn?.addEventListener("click", () => {
+        textarea.value = "";
+        charCount.textContent = "0 / 10,000 characters";
+        analyzeBtn.disabled = true;
+        hideResults();
+        textarea.focus();
+    });
+
+    analyzeBtn?.addEventListener("click", () => runAnalysis("text"));
+}
+
+// ─── Example Buttons ──────────────────────────────────────────────────────────
+function initExampleButtons() {
+    document.querySelectorAll(".example-btn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            const key = btn.dataset.example;
+            const textarea = document.getElementById("text-input");
+            const charCount = document.getElementById("char-count");
+            const analyzeBtn = document.getElementById("btn-text");
+
+            if (textarea && EXAMPLES[key]) {
+                textarea.value = EXAMPLES[key];
+                charCount.textContent = `${EXAMPLES[key].length.toLocaleString()} / 10,000 characters`;
+                analyzeBtn.disabled = false;
+                textarea.focus();
+            }
+        });
+    });
+}
+
+// ─── Analysis Dispatcher ─────────────────────────────────────────────────────
+async function runAnalysis(type) {
+    if (state.loading) return;
+
+    if (type !== "text" && !state.files[type]) {
+        showError("Please select a file first.");
         return;
     }
-
-    selectedFiles[type] = file;
-    showFilePreview(type, file);
-    enableAnalyzeButton(type);
-}
-
-function removeFile(type) {
-    selectedFiles[type] = null;
-    hideFilePreview(type);
-    disableAnalyzeButton(type);
-    // Reset the input
-    document.getElementById(`input-${type}`).value = '';
-}
-
-function showFilePreview(type, file) {
-    const dropzone = document.getElementById(`dropzone-${type}`);
-    const content = document.getElementById(`dropzone-${type}-content`);
-    const preview = document.getElementById(`preview-${type}`);
-
-    content.classList.add('hidden');
-    preview.classList.remove('hidden');
-    dropzone.classList.add('has-file');
-
-    const sizeStr = formatFileSize(file.size);
-    const iconColor = { audio: 'from-rose-500 to-orange-500', image: 'from-cyan-500 to-blue-500', video: 'from-violet-500 to-purple-600' }[type];
-    const iconSvg = {
-        audio: '<path stroke-linecap="round" stroke-linejoin="round" d="M19.114 5.636a9 9 0 010 12.728M16.463 8.288a5.25 5.25 0 010 7.424M6.75 8.25l4.72-4.72a.75.75 0 011.28.53v15.88a.75.75 0 01-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.01 9.01 0 012.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75z"/>',
-        image: '<path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0022.5 18.75V5.25A2.25 2.25 0 0020.25 3H3.75A2.25 2.25 0 001.5 5.25v13.5A2.25 2.25 0 003.75 21z"/>',
-        video: '<path stroke-linecap="round" stroke-linejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z"/>'
-    }[type];
-
-    let thumbHtml = '';
-    if (type === 'image') {
-        const url = URL.createObjectURL(file);
-        thumbHtml = `<img src="${url}" class="image-thumb" alt="Preview">`;
+    if (type === "text") {
+        const text = document.getElementById("text-input")?.value?.trim();
+        if (!text) {
+            showError("Please enter some text to analyze.");
+            return;
+        }
     }
 
-    preview.innerHTML = `
-        <div class="file-preview">
-            ${thumbHtml || `
-            <div class="file-preview-icon bg-gradient-to-br ${iconColor}">
-                <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">${iconSvg}</svg>
-            </div>`}
-            <div class="file-preview-info">
-                <div class="file-preview-name">${escapeHtml(file.name)}</div>
-                <div class="file-preview-size">${sizeStr}</div>
-            </div>
-            <div class="file-preview-remove" onclick="event.stopPropagation(); removeFile('${type}')" title="Remove file">
-                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
-                </svg>
-            </div>
-        </div>
-    `;
-}
-
-function hideFilePreview(type) {
-    const dropzone = document.getElementById(`dropzone-${type}`);
-    const content = document.getElementById(`dropzone-${type}-content`);
-    const preview = document.getElementById(`preview-${type}`);
-
-    content.classList.remove('hidden');
-    preview.classList.add('hidden');
-    preview.innerHTML = '';
-    dropzone.classList.remove('has-file');
-}
-
-function enableAnalyzeButton(type) {
-    const btn = document.getElementById(`btn-analyze-${type}`);
-    btn.disabled = false;
-    btn.classList.remove('opacity-50', 'cursor-not-allowed');
-}
-
-function disableAnalyzeButton(type) {
-    const btn = document.getElementById(`btn-analyze-${type}`);
-    btn.disabled = true;
-    btn.classList.add('opacity-50', 'cursor-not-allowed');
-}
-
-// ─── API Communication ───────────────────────────────────────
-
-async function analyzeFile(type) {
-    const file = selectedFiles[type];
-    if (!file) {
-        showToast('Please select a file first', 'error');
-        return;
-    }
-
-    const btn = document.getElementById(`btn-analyze-${type}`);
-    btn.classList.add('loading');
-    btn.disabled = true;
-
-    // Show loading state in results panel
-    showLoadingResults(type);
+    setLoading(type, true);
+    hideResults();
 
     try {
-        const formData = new FormData();
-        formData.append('file', file);
-
-        const response = await fetch(`${API_BASE}/api/analyze/${type}`, {
-            method: 'POST',
-            body: formData
-        });
-
-        const result = await response.json();
-
-        if (result.success) {
-            renderResults(type, result.data);
-            showToast('Analysis complete!', 'success');
+        let result;
+        if (type === "text") {
+            result = await analyzeText();
         } else {
-            showErrorResults(type, result.error || 'Analysis failed');
-            showToast(result.error || 'Analysis failed', 'error');
+            result = await analyzeFile(type);
         }
-    } catch (error) {
-        console.error('API Error:', error);
-        showErrorResults(type, 'Could not connect to the server. Make sure the backend is running on port 5000.');
-        showToast('Connection failed — is the backend running?', 'error');
+        renderResults(type, result);
+    } catch (err) {
+        showError(err.message || "Analysis failed. Make sure the backend is running.");
     } finally {
-        btn.classList.remove('loading');
-        btn.disabled = false;
+        setLoading(type, false);
     }
 }
 
-// ─── Results Rendering ───────────────────────────────────────
+async function analyzeFile(type) {
+    const file = state.files[type];
+    const formData = new FormData();
+    formData.append("file", file);
 
-function showLoadingResults(type) {
-    const panel = document.getElementById(`results-${type}`);
-    panel.innerHTML = `
-        <div class="text-center space-y-4">
-            <div class="spinner w-12 h-12 mx-auto" style="border-width: 3px;"></div>
-            <div>
-                <p class="text-gray-300 font-medium">Analyzing ${type}...</p>
-                <p class="text-gray-600 text-xs mt-1">This may take a few seconds</p>
-            </div>
-        </div>
-    `;
-}
-
-function showErrorResults(type, error) {
-    const panel = document.getElementById(`results-${type}`);
-    panel.innerHTML = `
-        <div class="text-center space-y-3 result-animate">
-            <div class="w-16 h-16 mx-auto rounded-2xl bg-red-500/10 flex items-center justify-center">
-                <svg class="w-8 h-8 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
-                </svg>
-            </div>
-            <p class="text-red-300 text-sm font-medium">${escapeHtml(error)}</p>
-        </div>
-    `;
-}
-
-function renderResults(type, data) {
-    const panel = document.getElementById(`results-${type}`);
-    const score = data.threat_score || 0;
-    const level = (data.threat_level || 'LOW').toLowerCase();
-    const color = data.threat_color || '#22c55e';
-    const circumference = 2 * Math.PI * 60;
-    const offset = circumference - (score / 100) * circumference;
-
-    let html = `<div class="result-animate w-full space-y-1" style="display: block;">`;
-
-    // ── Threat Gauge ──
-    html += `
-        <div class="text-center pb-4">
-            <div class="threat-gauge mx-auto">
-                <svg viewBox="0 0 136 136" width="100%" height="100%">
-                    <circle class="threat-gauge-bg" cx="68" cy="68" r="60"/>
-                    <circle class="threat-gauge-fill" cx="68" cy="68" r="60"
-                        stroke="${color}"
-                        stroke-dasharray="${circumference}"
-                        stroke-dashoffset="${offset}"/>
-                </svg>
-                <div class="threat-gauge-text">
-                    <span class="threat-score-value" style="color: ${color}">${Math.round(score)}</span>
-                    <span class="threat-score-label">Threat Score</span>
-                </div>
-            </div>
-            <div class="mt-3">
-                <span class="level-badge ${level}">
-                    ${{ critical: '🚨', high: '⚠️', medium: '⚡', low: '✅' }[level] || '✅'} ${data.threat_level || 'LOW'}
-                </span>
-            </div>
-            <p class="text-gray-400 text-xs mt-2 max-w-xs mx-auto">${escapeHtml(data.threat_description || '')}</p>
-            ${data.processing_time ? `<div class="processing-time justify-center mt-2"><svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"/></svg> ${data.processing_time}s</div>` : ''}
-        </div>
-    `;
-
-    // ── Analysis Breakdown ──
-    if (data.analyses && data.analyses.length > 0) {
-        html += `<div class="result-section"><div class="result-section-title">Analysis Breakdown</div>`;
-        data.analyses.forEach((a, i) => {
-            const barColor = a.score >= 60 ? '#ef4444' : a.score >= 35 ? '#eab308' : '#22c55e';
-            html += `
-                <div class="analysis-bar-item">
-                    <div class="analysis-bar-label">
-                        <span>${escapeHtml(a.name)}</span>
-                        <span>${Math.round(a.score)}%</span>
-                    </div>
-                    <div class="analysis-bar-track">
-                        <div class="analysis-bar-fill" style="background: ${barColor}; width: 0;" data-width="${a.score}%"></div>
-                    </div>
-                    ${a.details ? `<p class="text-gray-600 text-xs mt-1">${escapeHtml(a.details)}</p>` : ''}
-                </div>
-            `;
-        });
-        html += `</div>`;
-    }
-
-    // ── Transcript (Audio only) ──
-    if (type === 'audio' && data.transcript && data.transcript !== '[Transcription unavailable]') {
-        html += `
-            <div class="result-section">
-                <div class="result-section-title">Transcript</div>
-                <div class="transcript-box">"${escapeHtml(data.transcript)}"</div>
-            </div>
-        `;
-    }
-
-    // ── Detected Keywords (Audio only) ──
-    if (type === 'audio' && data.analyses) {
-        const keywordAnalysis = data.analyses.find(a => a.found_keywords && a.found_keywords.length > 0);
-        if (keywordAnalysis) {
-            html += `<div class="result-section"><div class="result-section-title">Detected Scam Keywords</div><div class="flex flex-wrap gap-1">`;
-            keywordAnalysis.found_keywords.slice(0, 20).forEach(kw => {
-                html += `<span class="keyword-tag">${escapeHtml(kw.keyword)} ${kw.count > 1 ? `(×${kw.count})` : ''}</span>`;
-            });
-            html += `</div></div>`;
-        }
-    }
-
-    // ── Detected Indicators (Image/Video) ──
-    if (data.detected_indicators && data.detected_indicators.length > 0) {
-        html += `<div class="result-section"><div class="result-section-title">Detected Indicators</div>`;
-        data.detected_indicators.slice(0, 8).forEach(ind => {
-            html += `
-                <div class="pattern-item">
-                    <div class="flex items-center justify-between mb-1">
-                        <span class="text-xs font-semibold text-gray-300">${escapeHtml(ind.type)}</span>
-                        <span class="badge ${ind.severity || 'low'}">${ind.severity || 'info'}</span>
-                    </div>
-                    <p class="text-xs text-gray-500">${escapeHtml(ind.detail)}</p>
-                </div>
-            `;
-        });
-        html += `</div>`;
-    }
-
-    // ── Detected Patterns (Audio) ──
-    if (data.detected_patterns && data.detected_patterns.length > 0) {
-        html += `<div class="result-section"><div class="result-section-title">Behavioral Patterns</div>`;
-        data.detected_patterns.forEach(p => {
-            html += `
-                <div class="pattern-item">
-                    <div class="flex items-center justify-between mb-1">
-                        <span class="text-xs font-semibold text-gray-300">${escapeHtml(p.name)}</span>
-                        <span class="badge ${p.severity || 'medium'}">${p.severity || 'medium'}</span>
-                    </div>
-                    <p class="text-xs text-gray-500">${escapeHtml(p.description)}</p>
-                </div>
-            `;
-        });
-        html += `</div>`;
-    }
-
-    // ── Classification (Image/Video) ──
-    if (data.classification) {
-        const classLabels = {
-            'AI_GENERATED': { text: 'AI-Generated', icon: '🤖', cls: 'critical' },
-            'DEEPFAKE': { text: 'Deepfake Detected', icon: '🚨', cls: 'critical' },
-            'SUSPICIOUS': { text: 'Suspicious', icon: '⚠️', cls: 'medium' },
-            'LIKELY_GENUINE': { text: 'Likely Genuine', icon: '✅', cls: 'low' }
-        };
-        const cl = classLabels[data.classification] || { text: data.classification, icon: '❓', cls: 'medium' };
-        html += `
-            <div class="result-section text-center">
-                <div class="result-section-title">Classification</div>
-                <span class="level-badge ${cl.cls}" style="font-size: 0.85rem;">${cl.icon} ${cl.text}</span>
-            </div>
-        `;
-    }
-
-    // ── Recommendations ──
-    if (data.recommendations && data.recommendations.length > 0) {
-        html += `<div class="result-section"><div class="result-section-title">Recommendations</div>`;
-        data.recommendations.forEach(rec => {
-            html += `<div class="recommendation-item">${escapeHtml(rec)}</div>`;
-        });
-        html += `</div>`;
-    }
-
-    // ── Media Info ──
-    if (data.image_info) {
-        html += `
-            <div class="result-section">
-                <div class="result-section-title">Image Info</div>
-                <div class="grid grid-cols-2 gap-2 text-xs">
-                    <div class="text-gray-500">Resolution</div><div class="text-gray-300">${data.image_info.width}×${data.image_info.height}</div>
-                    <div class="text-gray-500">Format</div><div class="text-gray-300">${data.image_info.format || 'N/A'}</div>
-                    <div class="text-gray-500">Size</div><div class="text-gray-300">${formatFileSize(data.image_info.size_bytes)}</div>
-                </div>
-            </div>
-        `;
-    }
-    if (data.video_info) {
-        html += `
-            <div class="result-section">
-                <div class="result-section-title">Video Info</div>
-                <div class="grid grid-cols-2 gap-2 text-xs">
-                    <div class="text-gray-500">Resolution</div><div class="text-gray-300">${data.video_info.width}×${data.video_info.height}</div>
-                    <div class="text-gray-500">Duration</div><div class="text-gray-300">${data.video_info.duration_seconds}s</div>
-                    <div class="text-gray-500">FPS</div><div class="text-gray-300">${data.video_info.fps}</div>
-                    <div class="text-gray-500">Frames</div><div class="text-gray-300">${data.video_info.total_frames}</div>
-                </div>
-            </div>
-        `;
-    }
-
-    html += `</div>`;
-    panel.innerHTML = html;
-
-    // Animate bars after render
-    requestAnimationFrame(() => {
-        setTimeout(() => {
-            panel.querySelectorAll('.analysis-bar-fill').forEach(bar => {
-                bar.style.width = bar.dataset.width;
-            });
-        }, 100);
+    const res = await fetchWithTimeout(`${API_BASE}/analyze/${type}`, {
+        method: "POST",
+        body: formData,
     });
+
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Server error: ${res.status}`);
+    }
+    return res.json();
 }
 
-// ─── Toast Notifications ─────────────────────────────────────
+async function analyzeText() {
+    const text = document.getElementById("text-input").value.trim();
+    const res = await fetchWithTimeout(`${API_BASE}/analyze/text`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+    });
 
-function showToast(message, type = 'info') {
-    const container = document.getElementById('toast-container');
-    const toast = document.createElement('div');
-    toast.className = `toast ${type}`;
-    toast.textContent = message;
-    container.appendChild(toast);
-
-    setTimeout(() => {
-        toast.style.opacity = '0';
-        toast.style.transform = 'translateX(60px)';
-        toast.style.transition = 'all 0.3s ease';
-        setTimeout(() => toast.remove(), 300);
-    }, 4000);
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Server error: ${res.status}`);
+    }
+    return res.json();
 }
 
-// ─── Utilities ───────────────────────────────────────────────
+// ─── Results Rendering ────────────────────────────────────────────────────────
+function renderResults(type, response) {
+    const resultData = response.result || response;
+    const container = document.getElementById("results-content");
+    const section = document.getElementById("results");
 
-function formatFileSize(bytes) {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+    if (!container || !section) return;
+
+    const threatLevel = resultData.threat_level || resultData.classification || "UNKNOWN";
+    const score = resultData.threat_score ?? resultData.ai_probability ?? 0;
+    const summary = resultData.summary || "";
+    const recommendations = resultData.recommendations || [];
+
+    const levelClass = threatLevelClass(threatLevel);
+
+    let html = `
+    <div class="result-card ${levelClass}">
+      <div class="result-header">
+        <div class="result-badge ${levelClass}">${threatLevelIcon(threatLevel)} ${threatLevel}</div>
+        <div class="result-score">
+          <div class="score-circle ${levelClass}">
+            <svg viewBox="0 0 36 36" class="score-svg">
+              <path class="score-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"/>
+              <path class="score-fill" stroke-dasharray="${score}, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"/>
+            </svg>
+            <div class="score-text">
+              <span class="score-num">${Math.round(score)}</span>
+              <span class="score-unit">/ 100</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <p class="result-summary">${escHtml(summary)}</p>
+
+      ${renderStageScores(resultData)}
+      ${renderExtraInfo(type, resultData)}
+      ${renderRecommendations(recommendations)}
+    </div>
+  `;
+
+    container.innerHTML = html;
+    section.classList.remove("hidden");
+    section.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+function renderStageScores(data) {
+    const stages = data.stage_scores || data.scores;
+    if (!stages || Object.keys(stages).length === 0) return "";
+
+    const labels = {
+        keyword: "Keyword Detection",
+        behavioral: "Behavioral Patterns",
+        ml_model: "ML Model",
+        ml: "ML Model",
+        structural: "Structural Patterns",
+        url: "URL Analysis",
+        linguistic: "Linguistic Analysis",
+        metadata: "Metadata Forensics",
+        noise: "Noise Analysis",
+        face: "Face Artifacts",
+        compression: "Compression Analysis",
+        deep_learning: "Deep Learning",
+        temporal: "Temporal Consistency",
+        face_tracking: "Face Tracking",
+        frame_analysis: "Frame Analysis",
+        audio_sync: "Audio Sync",
+    };
+
+    const bars = Object.entries(stages).map(([key, val]) => {
+        const label = labels[key] || key;
+        const pct = Math.round(Math.min(100, Math.max(0, val)));
+        const barClass = pct >= 70 ? "bar-critical" : pct >= 50 ? "bar-high" : pct >= 30 ? "bar-medium" : "bar-low";
+        return `
+      <div class="score-bar-row">
+        <span class="score-bar-label">${label}</span>
+        <div class="score-bar-track">
+          <div class="score-bar-fill ${barClass}" style="width:${pct}%"></div>
+        </div>
+        <span class="score-bar-val">${pct}</span>
+      </div>`;
+    }).join("");
+
+    return `<div class="stage-scores"><h4>Stage Breakdown</h4>${bars}</div>`;
 }
 
-// ─── Initialize ──────────────────────────────────────────────
+function renderExtraInfo(type, data) {
+    let items = [];
 
-document.addEventListener('DOMContentLoaded', () => {
-    // Prevent default drag behavior on the whole page
-    document.addEventListener('dragover', e => e.preventDefault());
-    document.addEventListener('drop', e => e.preventDefault());
+    if (type === "audio") {
+        if (data.transcription) items.push(["Transcription", `"${data.transcription.substring(0, 200)}${data.transcription.length > 200 ? "…" : ""}"`]);
+        if (data.detected_keywords?.length) items.push(["Keywords Found", data.detected_keywords.slice(0, 5).map(k => k.keyword).join(", ")]);
+        if (data.behavioral_patterns?.length) items.push(["Patterns Found", data.behavioral_patterns.map(p => p.pattern).join(", ")]);
+    } else if (type === "text") {
+        if (data.scam_type) items.push(["Scam Type", data.scam_type]);
+        if (data.word_count) items.push(["Word Count", data.word_count]);
+        const urls = data.analysis_details?.url?.urls_found;
+        if (urls?.length) items.push(["URLs Detected", urls.length]);
+        const kwFlags = data.analysis_details?.keyword?.flags;
+        if (kwFlags?.length) items.push(["Scam Keywords", kwFlags.slice(0, 4).map(f => f.keyword).join(", ")]);
+    } else if (type === "image") {
+        if (data.classification) items.push(["Classification", data.classification]);
+        if (data.confidence) items.push(["Confidence", `${data.confidence}%`]);
+    } else if (type === "video") {
+        if (data.classification) items.push(["Classification", data.classification]);
+        if (data.frames_analyzed) items.push(["Frames Analyzed", data.frames_analyzed]);
+        if (data.video_metadata?.duration_seconds) items.push(["Duration", `${data.video_metadata.duration_seconds}s`]);
+    }
 
-    console.log('🛡️ Guardian AI Frontend Loaded');
-});
+    if (!items.length) return "";
+
+    return `
+    <div class="extra-info">
+      ${items.map(([k, v]) => `<div class="extra-row"><span class="extra-key">${k}:</span><span class="extra-val">${escHtml(String(v))}</span></div>`).join("")}
+    </div>`;
+}
+
+function renderRecommendations(recs) {
+    if (!recs?.length) return "";
+    return `
+    <div class="recommendations">
+      <h4>Recommendations</h4>
+      <ul>${recs.map(r => `<li>${escHtml(r)}</li>`).join("")}</ul>
+    </div>`;
+}
+
+// ─── Results Control ──────────────────────────────────────────────────────────
+function initResults() {
+    document.getElementById("btn-close-results")?.addEventListener("click", hideResults);
+}
+
+function hideResults() {
+    document.getElementById("results")?.classList.add("hidden");
+}
+
+function showError(msg) {
+    const container = document.getElementById("results-content");
+    const section = document.getElementById("results");
+    if (container && section) {
+        container.innerHTML = `<div class="result-error"><span>⚠️</span> ${escHtml(msg)}</div>`;
+        section.classList.remove("hidden");
+    }
+}
+
+// ─── Loading State ────────────────────────────────────────────────────────────
+function setLoading(type, isLoading) {
+    state.loading = isLoading;
+    const btn = document.getElementById(`btn-${type}`);
+    if (!btn) return;
+
+    const text = btn.querySelector(".btn-text");
+    const spinner = btn.querySelector(".btn-spinner");
+
+    btn.disabled = isLoading;
+    text?.classList.toggle("hidden", isLoading);
+    spinner?.classList.toggle("hidden", !isLoading);
+}
+
+// ─── API Health Check ─────────────────────────────────────────────────────────
+async function checkApiHealth() {
+    try {
+        const res = await fetchWithTimeout(`${API_BASE}/health`, {}, 3000);
+        if (res.ok) {
+            console.log("✅ Guardian AI API connected.");
+        }
+    } catch {
+        console.warn("⚠️ Cannot reach Guardian AI API. Is the backend running?");
+    }
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function threatLevelClass(level) {
+    const map = {
+        CRITICAL: "level-critical", HIGH: "level-high", MEDIUM: "level-medium", LOW: "level-low",
+        AI_GENERATED: "level-critical", DEEPFAKE: "level-critical", SUSPICIOUS: "level-high",
+        GENUINE: "level-low", ERROR: "level-medium"
+    };
+    return map[level] || "level-low";
+}
+
+function threatLevelIcon(level) {
+    const map = {
+        CRITICAL: "🚨", HIGH: "⚠️", MEDIUM: "⚡", LOW: "✅",
+        AI_GENERATED: "🤖", DEEPFAKE: "🎭", SUSPICIOUS: "🔍", GENUINE: "✅", ERROR: "❌"
+    };
+    return map[level] || "🔍";
+}
+
+function escHtml(str) {
+    const d = document.createElement("div");
+    d.textContent = str;
+    return d.innerHTML;
+}
+
+function formatBytes(bytes) {
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+    return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+}
+
+async function fetchWithTimeout(url, options = {}, timeout = 30000) {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeout);
+    try {
+        const res = await fetch(url, { ...options, signal: controller.signal });
+        return res;
+    } finally {
+        clearTimeout(id);
+    }
+}

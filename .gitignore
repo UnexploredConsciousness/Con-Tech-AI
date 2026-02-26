@@ -1,17 +1,69 @@
 # Python
-venv/
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
 
-# Android
-.gradle/
-**/build/
-local.properties
-*.iml
+# Virtual environments
+venv/
+env/
+.env
+.venv/
 
-# VSCode
-.vscode/
+# Environment files
+.env
+.env.local
+*.env
+
+# Uploads (temp files)
+backend/uploads/
+
+# ML Models (large binary files — store via Git LFS or download script)
+backend/models/*.pkl
+backend/models/*.h5
+backend/models/*.pt
+backend/models/*.bin
+!backend/models/.gitkeep
+
+# Training data (images, audio) — too large for git
+backend/training/data/images/
+backend/training/data/audio/
+
+# Logs
+*.log
+logs/
 
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# Android build
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/*.keystore
+
+# Node (if any frontend tooling)
+node_modules/
+npm-debug.log*
+
+# Coverage
+.coverage
+htmlcov/
+.pytest_cache/

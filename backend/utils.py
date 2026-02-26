@@ -1,112 +1,130 @@
 """
 Guardian AI - Shared Utilities
-==============================
-File validation, temp file management, response formatting, and logging.
+Common helpers, constants, and formatting functions.
 """
 
 import os
 import uuid
 import logging
-import tempfile
 from datetime import datetime
+from werkzeug.utils import secure_filename
 
-# ─── Logging Config ───────────────────────────────────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-logger = logging.getLogger('GuardianAI')
+logger = logging.getLogger("guardian-ai.utils")
 
-# ─── Constants ────────────────────────────────────────────────────
-ALLOWED_AUDIO_EXTENSIONS = {'wav', 'mp3', 'ogg', 'flac', 'aac', 'm4a', 'wma', 'webm'}
-ALLOWED_IMAGE_EXTENSIONS = {'jpg', 'jpeg', 'png', 'bmp', 'gif', 'webp', 'tiff'}
-ALLOWED_VIDEO_EXTENSIONS = {'mp4', 'avi', 'mov', 'mkv', 'webm', 'flv', 'wmv'}
+# ─── Configuration ────────────────────────────────────────────────────────────
+UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), "uploads")
 
-MAX_FILE_SIZE_MB = 50
-UPLOAD_FOLDER = os.path.join(tempfile.gettempdir(), 'guardian_ai_uploads')
+ALLOWED_AUDIO = {"wav", "mp3", "ogg", "flac", "m4a", "aac", "wma", "opus"}
+ALLOWED_IMAGE = {"jpg", "jpeg", "png", "bmp", "webp", "tiff", "gif"}
+ALLOWED_VIDEO = {"mp4", "avi", "mov", "mkv", "webm", "flv", "wmv", "mpeg", "3gp"}
 
+# Threat level thresholds
+THREAT_THRESHOLDS = {
+    "CRITICAL": 70,
+    "HIGH": 50,
+    "MEDIUM": 30,
+    "LOW": 0,
+}
 
-def ensure_upload_folder():
-    """Create upload folder if it doesn't exist."""
-    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-    return UPLOAD_FOLDER
+# Classification labels
+THREAT_COLORS = {
+    "CRITICAL": "#FF0000",
+    "HIGH": "#FF6600",
+    "MEDIUM": "#FFCC00",
+    "LOW": "#00CC44",
+}
 
-
-def get_file_extension(filename):
-    """Extract file extension (lowercase, no dot)."""
-    if '.' in filename:
-        return filename.rsplit('.', 1)[1].lower()
-    return ''
-
-
-def validate_file(file, allowed_extensions):
-    """
-    Validate uploaded file.
-    Returns (is_valid, error_message).
-    """
-    if not file or file.filename == '':
-        return False, 'No file selected'
-
-    ext = get_file_extension(file.filename)
-    if ext not in allowed_extensions:
-        return False, f'Invalid file type .{ext}. Allowed: {", ".join(sorted(allowed_extensions))}'
-
-    return True, None
+THREAT_DESCRIPTIONS = {
+    "CRITICAL": "Highly likely to be malicious. Block immediately.",
+    "HIGH": "Strong indicators of fraud. Exercise extreme caution.",
+    "MEDIUM": "Suspicious patterns detected. Proceed with caution.",
+    "LOW": "Likely genuine. No significant threats detected.",
+}
 
 
-def save_temp_file(file):
-    """
-    Save uploaded file to temp directory with a unique name.
-    Returns the temp file path.
-    """
-    ensure_upload_folder()
-    ext = get_file_extension(file.filename)
+# ─── File Helpers ─────────────────────────────────────────────────────────────
+def allowed_file(filename: str, allowed_set: set) -> bool:
+    """Check if file extension is in the allowed set."""
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in allowed_set
+
+
+def save_upload(file_obj, upload_dir: str) -> str:
+    """Save an uploaded file with a unique name and return the path."""
+    os.makedirs(upload_dir, exist_ok=True)
+    ext = file_obj.filename.rsplit(".", 1)[-1].lower()
     unique_name = f"{uuid.uuid4().hex}.{ext}"
-    filepath = os.path.join(UPLOAD_FOLDER, unique_name)
-    file.save(filepath)
-    logger.info(f"Saved temp file: {filepath} ({os.path.getsize(filepath)} bytes)")
+    filepath = os.path.join(upload_dir, unique_name)
+    file_obj.save(filepath)
+    logger.debug(f"Saved upload to {filepath}")
     return filepath
 
 
-def cleanup_temp_file(filepath):
-    """Remove a temp file safely."""
+def cleanup_file(filepath: str) -> None:
+    """Delete a temporary file, ignoring errors."""
     try:
         if filepath and os.path.exists(filepath):
             os.remove(filepath)
-            logger.info(f"Cleaned up temp file: {filepath}")
+            logger.debug(f"Cleaned up {filepath}")
     except Exception as e:
-        logger.warning(f"Failed to cleanup {filepath}: {e}")
+        logger.warning(f"Could not remove {filepath}: {e}")
 
 
-def format_response(success, data=None, error=None):
-    """Standard API response format."""
-    response = {
-        'success': success,
-        'timestamp': datetime.utcnow().isoformat() + 'Z',
-    }
-    if data is not None:
-        response['data'] = data
-    if error is not None:
-        response['error'] = error
-    return response
-
-
-def classify_threat_level(score):
-    """
-    Classify a 0-100 threat score into a threat level.
-    Returns (level, color, description).
-    """
-    if score >= 70:
-        return 'CRITICAL', '#ef4444', 'High probability of threat detected. Immediate action recommended.'
-    elif score >= 50:
-        return 'HIGH', '#f97316', 'Significant indicators of potential threat. Exercise extreme caution.'
-    elif score >= 30:
-        return 'MEDIUM', '#eab308', 'Some suspicious indicators detected. Proceed with caution.'
+# ─── Threat Classification ────────────────────────────────────────────────────
+def classify_threat(score: float) -> str:
+    """Convert a 0-100 threat score to a label."""
+    if score >= THREAT_THRESHOLDS["CRITICAL"]:
+        return "CRITICAL"
+    elif score >= THREAT_THRESHOLDS["HIGH"]:
+        return "HIGH"
+    elif score >= THREAT_THRESHOLDS["MEDIUM"]:
+        return "MEDIUM"
     else:
-        return 'LOW', '#22c55e', 'No significant threats detected. Content appears genuine.'
+        return "LOW"
 
 
-def clamp(value, min_val=0, max_val=100):
-    """Clamp a value between min and max."""
-    return max(min_val, min(max_val, value))
+def classify_authenticity(score: float) -> str:
+    """Convert a 0-100 deepfake score to a label."""
+    if score >= 70:
+        return "AI_GENERATED"
+    elif score >= 40:
+        return "SUSPICIOUS"
+    else:
+        return "GENUINE"
+
+
+# ─── Response Formatting ─────────────────────────────────────────────────────
+def format_response(modality: str, result: dict, request_id: str) -> dict:
+    """Wrap an analyzer result in the standard API response envelope."""
+    return {
+        "request_id": request_id,
+        "modality": modality,
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "result": result,
+        "meta": {
+            "service": "Guardian AI",
+            "version": "1.1.0",
+        },
+    }
+
+
+# ─── Score Helpers ────────────────────────────────────────────────────────────
+def weighted_average(scores: dict, weights: dict) -> float:
+    """
+    Compute a weighted average given score and weight dicts with matching keys.
+    Both dicts must have the same keys.
+    """
+    total_weight = sum(weights.values())
+    if total_weight == 0:
+        return 0.0
+    return sum(scores[k] * weights[k] for k in scores) / total_weight
+
+
+def clamp(value: float, lo: float = 0.0, hi: float = 100.0) -> float:
+    """Clamp a value between lo and hi."""
+    return max(lo, min(hi, value))
+
+
+# ─── Text Helpers ─────────────────────────────────────────────────────────────
+def truncate_text(text: str, max_len: int = 200) -> str:
+    """Truncate text for display/logging."""
+    return text[:max_len] + "..." if len(text) > max_len else text
