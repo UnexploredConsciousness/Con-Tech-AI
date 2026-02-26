@@ -1,0 +1,470 @@
+/* ═══════════════════════════════════════════════════════════
+   Guardian AI – Custom Styles
+   Premium dark theme with glassmorphism, gradients, and 
+   micro-animations on top of Tailwind CSS.
+   ═══════════════════════════════════════════════════════════ */
+
+/* ─── Base ────────────────────────────────────────────────── */
+* { box-sizing: border-box; }
+
+::selection {
+    background: rgba(99, 102, 241, 0.4);
+    color: #fff;
+}
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.15);
+}
+
+/* ─── Glassmorphism Card ──────────────────────────────────── */
+.glass-card {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glass-card:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.1);
+    box-shadow: 0 8px 40px -12px rgba(0, 0, 0, 0.4);
+}
+
+/* ─── Tab Buttons ─────────────────────────────────────────── */
+.tab-btn {
+    color: #6b7280;
+    position: relative;
+}
+
+.tab-btn:hover {
+    color: #d1d5db;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.tab-btn.active {
+    color: #fff;
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.3), rgba(139, 92, 246, 0.3));
+    box-shadow: 0 4px 20px -4px rgba(99, 102, 241, 0.4);
+}
+
+/* ─── Drop Zone ───────────────────────────────────────────── */
+.drop-zone {
+    background: rgba(0, 0, 0, 0.2);
+    transition: all 0.3s ease;
+}
+
+.drop-zone:hover {
+    background: rgba(99, 102, 241, 0.05);
+}
+
+.drop-zone.dragging {
+    border-color: rgba(99, 102, 241, 0.6) !important;
+    background: rgba(99, 102, 241, 0.08) !important;
+    transform: scale(1.01);
+}
+
+.drop-zone.has-file {
+    border-color: rgba(34, 197, 94, 0.3);
+    background: rgba(34, 197, 94, 0.05);
+}
+
+/* ─── Analyze Button ──────────────────────────────────────── */
+.analyze-btn {
+    background: linear-gradient(135deg, #4f46e5, #7c3aed);
+    color: white;
+    border: none;
+    position: relative;
+    overflow: hidden;
+}
+
+.analyze-btn::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(255,255,255,0.1), transparent);
+    opacity: 0;
+    transition: opacity 0.3s;
+}
+
+.analyze-btn:not(:disabled):hover {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 30px -8px rgba(79, 70, 229, 0.5);
+}
+
+.analyze-btn:not(:disabled):hover::before {
+    opacity: 1;
+}
+
+.analyze-btn:not(:disabled) {
+    opacity: 1 !important;
+    cursor: pointer !important;
+}
+
+.analyze-btn:disabled {
+    background: linear-gradient(135deg, #374151, #1f2937);
+}
+
+.analyze-btn.loading {
+    pointer-events: none;
+}
+.analyze-btn.loading .btn-text { display: none; }
+.analyze-btn.loading .btn-loading { display: flex !important; }
+
+/* ─── Spinner ─────────────────────────────────────────────── */
+.spinner {
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* ─── Threat Gauge ────────────────────────────────────────── */
+.threat-gauge {
+    position: relative;
+    width: 160px;
+    height: 160px;
+    margin: 0 auto;
+}
+
+.threat-gauge svg {
+    transform: rotate(-90deg);
+}
+
+.threat-gauge-bg {
+    fill: none;
+    stroke: rgba(255, 255, 255, 0.06);
+    stroke-width: 8;
+}
+
+.threat-gauge-fill {
+    fill: none;
+    stroke-width: 8;
+    stroke-linecap: round;
+    transition: stroke-dashoffset 1.5s cubic-bezier(0.4, 0, 0.2, 1),
+                stroke 0.5s ease;
+}
+
+.threat-gauge-text {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.threat-score-value {
+    font-size: 2.5rem;
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: -0.02em;
+}
+
+.threat-score-label {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    margin-top: 4px;
+    opacity: 0.6;
+}
+
+/* ─── Results Card ────────────────────────────────────────── */
+.result-section {
+    padding: 16px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+.result-section:last-child { border-bottom: none; }
+
+.result-section-title {
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: #6b7280;
+    margin-bottom: 10px;
+}
+
+/* Analysis bar chart items */
+.analysis-bar-item {
+    margin-bottom: 10px;
+}
+.analysis-bar-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.8rem;
+    margin-bottom: 4px;
+}
+.analysis-bar-label span:first-child { color: #d1d5db; }
+.analysis-bar-label span:last-child { color: #9ca3af; font-weight: 600; }
+
+.analysis-bar-track {
+    height: 6px;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 3px;
+    overflow: hidden;
+}
+.analysis-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 1s cubic-bezier(0.4, 0, 0.2, 1);
+    width: 0;
+}
+
+/* Keyword tag */
+.keyword-tag {
+    display: inline-block;
+    padding: 3px 10px;
+    font-size: 0.7rem;
+    border-radius: 999px;
+    margin: 2px;
+    background: rgba(239, 68, 68, 0.1);
+    color: #fca5a5;
+    border: 1px solid rgba(239, 68, 68, 0.15);
+}
+
+/* Pattern item */
+.pattern-item {
+    padding: 10px 14px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    margin-bottom: 8px;
+}
+.pattern-item .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    font-size: 0.6rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border-radius: 999px;
+}
+.badge.high {
+    background: rgba(239, 68, 68, 0.15);
+    color: #fca5a5;
+}
+.badge.medium {
+    background: rgba(234, 179, 8, 0.15);
+    color: #fde047;
+}
+.badge.low {
+    background: rgba(34, 197, 94, 0.15);
+    color: #86efac;
+}
+
+/* Recommendation item */
+.recommendation-item {
+    padding: 8px 0;
+    font-size: 0.85rem;
+    color: #d1d5db;
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    line-height: 1.5;
+}
+
+/* ─── File Preview ────────────────────────────────────────── */
+.file-preview {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    border-radius: 12px;
+    background: rgba(34, 197, 94, 0.06);
+    border: 1px solid rgba(34, 197, 94, 0.15);
+}
+.file-preview-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+.file-preview-info { flex: 1; min-width: 0; }
+.file-preview-name {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #e5e7eb;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.file-preview-size {
+    font-size: 0.7rem;
+    color: #6b7280;
+}
+.file-preview-remove {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #6b7280;
+    cursor: pointer;
+    transition: all 0.2s;
+    flex-shrink: 0;
+    background: rgba(255,255,255,0.04);
+}
+.file-preview-remove:hover {
+    color: #ef4444;
+    background: rgba(239, 68, 68, 0.1);
+}
+
+/* Image thumbnail preview */
+.image-thumb {
+    width: 80px;
+    height: 80px;
+    object-fit: cover;
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.08);
+}
+
+/* ─── Level Badge (header of results) ─────────────────────── */
+.level-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+.level-badge.critical {
+    background: rgba(239, 68, 68, 0.15);
+    color: #fca5a5;
+    border: 1px solid rgba(239, 68, 68, 0.2);
+}
+.level-badge.high {
+    background: rgba(249, 115, 22, 0.15);
+    color: #fdba74;
+    border: 1px solid rgba(249, 115, 22, 0.2);
+}
+.level-badge.medium {
+    background: rgba(234, 179, 8, 0.15);
+    color: #fde047;
+    border: 1px solid rgba(234, 179, 8, 0.2);
+}
+.level-badge.low {
+    background: rgba(34, 197, 94, 0.15);
+    color: #86efac;
+    border: 1px solid rgba(34, 197, 94, 0.2);
+}
+
+/* ─── Toast Notification ──────────────────────────────────── */
+.toast {
+    padding: 14px 20px;
+    border-radius: 14px;
+    font-size: 0.85rem;
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    animation: slideInRight 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    max-width: 380px;
+    box-shadow: 0 8px 30px -8px rgba(0, 0, 0, 0.5);
+}
+
+.toast.error {
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    color: #fca5a5;
+}
+
+.toast.success {
+    background: rgba(34, 197, 94, 0.15);
+    border: 1px solid rgba(34, 197, 94, 0.2);
+    color: #86efac;
+}
+
+.toast.info {
+    background: rgba(59, 130, 246, 0.15);
+    border: 1px solid rgba(59, 130, 246, 0.2);
+    color: #93c5fd;
+}
+
+@keyframes slideInRight {
+    from {
+        opacity: 0;
+        transform: translateX(60px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+/* ─── Slide-in animation for results ──────────────────────── */
+.result-animate {
+    animation: fadeSlideUp 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes fadeSlideUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* ─── Blob Animation ──────────────────────────────────────── */
+@keyframes blob {
+    0%, 100% { transform: translate(0px, 0px) scale(1); }
+    33% { transform: translate(30px, -60px) scale(1.1); }
+    66% { transform: translate(-20px, 30px) scale(0.9); }
+}
+
+.animate-blob { animation: blob 12s infinite ease-in-out; }
+.animation-delay-2000 { animation-delay: 2s; }
+.animation-delay-4000 { animation-delay: 4s; }
+
+/* ─── Responsive ──────────────────────────────────────────── */
+@media (max-width: 640px) {
+    .threat-gauge {
+        width: 130px;
+        height: 130px;
+    }
+    .threat-score-value {
+        font-size: 2rem;
+    }
+}
+
+/* ─── Transcript box ──────────────────────────────────────── */
+.transcript-box {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 12px;
+    padding: 14px;
+    font-size: 0.82rem;
+    color: #9ca3af;
+    line-height: 1.6;
+    max-height: 120px;
+    overflow-y: auto;
+    font-style: italic;
+}
+
+/* Processing time */
+.processing-time {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.7rem;
+    color: #6b7280;
+    margin-top: 8px;
+}
